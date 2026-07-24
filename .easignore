@@ -1,0 +1,4 @@
+builds/
+.expo/
+*.log
+expo-start.log
