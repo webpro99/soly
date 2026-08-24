@@ -128,7 +128,7 @@ export function ChatBubble({
         styles.bubble,
         {
           alignSelf: isMe ? 'flex-end' : 'flex-start',
-          backgroundColor: isSoly ? 'rgba(230,201,130,0.13)' : isMe ? scene.accentPrimary : scene.surface,
+          backgroundColor: isSoly ? 'rgba(207,160,85,0.13)' : isMe ? scene.accentPrimary : scene.surface,
           borderColor: isSoly ? scene.accentPrimary : scene.border,
         },
       ]}

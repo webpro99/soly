@@ -4,7 +4,7 @@
     "slug": "soly",
     "version": "1.0.17",
     "orientation": "portrait",
-    "icon": "./assets/Soly.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -17,9 +17,9 @@
     },
     "android": {
       "package": "com.soly.app",
-      "versionCode": 18,
+      "versionCode": 19,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/Soly.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#134F32"
       },
       "edgeToEdgeEnabled": false,
@@ -38,6 +38,7 @@
       "expo-font",
       "expo-audio",
       "expo-asset",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {
@@ -58,11 +59,11 @@
         }
       ]
     ],
+    "owner": "zakfario",
     "extra": {
       "eas": {
-        "projectId": "903c182c-1fb0-40cb-a74c-81e2dd0a46b6"
+        "projectId": "f3174481-d50e-468c-89d8-c9ba5be4e1d5"
       }
-    },
-    "owner": "xfario"
+    }
   }
 }

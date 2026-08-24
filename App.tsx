@@ -1,21 +1,25 @@
 import { CormorantGaramond_600SemiBold } from '@expo-google-fonts/cormorant-garamond';
+import { EBGaramond_400Regular_Italic } from '@expo-google-fonts/eb-garamond';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Jost_400Regular, Jost_500Medium, Jost_700Bold } from '@expo-google-fonts/jost';
 import { Marcellus_400Regular } from '@expo-google-fonts/marcellus';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAudioPlayer } from 'expo-audio';
+import * as Clipboard from 'expo-clipboard';
 import { useFonts } from 'expo-font';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   Animated,
+  AppState,
   Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
-  SafeAreaView,
   ScrollView,
   Share,
   StyleSheet,
@@ -39,6 +43,7 @@ import {
   ToastNotification,
 } from './src/components/SolyPrimitives';
 import { RealMap } from './src/components/RealMap';
+import { StayLocatorMap } from './src/components/StayLocatorMap';
 import {
   agendaDays,
   companions,
@@ -68,13 +73,13 @@ const quickModules: { key: ModuleKey; label: string; meta: string }[] = [
   { key: 'account', label: 'Compte', meta: 'Palier Hôte' },
 ];
 
-const homeModules: { key: ModuleKey; label: string; kicker: string; icon: string }[] = [
-  { key: 'stay', label: 'Mon séjour', kicker: 'le fil de vos jours', icon: '⌁' },
-  { key: 'butler', label: 'SOLÝ', kicker: 'votre majordome à votre service', icon: '♢' },
-  { key: 'weather', label: 'Atmosphère', kicker: "Marrakech aujourd'hui", icon: '☼' },
-  { key: 'companions', label: 'Vos proches', kicker: 'réunis autour de vous', icon: '⌬' },
-  { key: 'explore', label: 'Explorer', kicker: 'la ville à votre main', icon: '◇' },
-  { key: 'currency', label: 'Devises', kicker: "d'un simple regard", icon: '↻' },
+const homeModules: { key: ModuleKey; label: string; kicker: string; icon: React.ComponentProps<typeof MaterialIcons>['name'] }[] = [
+  { key: 'stay', label: 'Mon séjour', kicker: 'le fil de vos jours', icon: 'card-travel' },
+  { key: 'butler', label: 'SOLÝ', kicker: 'votre majordome', icon: 'room-service' },
+  { key: 'weather', label: 'Atmosphère', kicker: "Marrakech aujourd'hui", icon: 'light-mode' },
+  { key: 'explore', label: 'Explorer', kicker: 'la ville à votre main', icon: 'search' },
+  { key: 'currency', label: 'Devises', kicker: "d'un simple regard", icon: 'payments' },
+  { key: 'sos', label: 'SOS', kicker: 'assistance immédiate', icon: 'sos' },
 ];
 
 type ArrivalMode = 'flight' | 'train' | 'car';
@@ -100,6 +105,7 @@ type LiveWeatherState = {
 type ExchangeRateState = {
   status: 'loading' | 'ready' | 'error';
   rate: number;
+  rates: Record<string, number>;
   updatedAt: string;
 };
 
@@ -136,6 +142,7 @@ const fallbackWeather: LiveWeatherState = {
 const fallbackExchangeRate: ExchangeRateState = {
   status: 'loading',
   rate: 10.82,
+  rates: { EUR: 1, USD: 1.08, JPY: 168, GBP: 0.84, CAD: 1.48, CNY: 7.86, MAD: 10.82 },
   updatedAt: "à l'ouverture",
 };
 
@@ -161,9 +168,9 @@ const accountAdvantages = [
 ];
 
 const accountPersonalInfo = [
-  { label: 'Zakaria Farouki', detail: 'Titulaire du compte · né le 18 mars 1985', marker: '' },
-  { label: 'zakaria.f@...', detail: 'Courriel de contact — vérifié', marker: '✓' },
+  { label: 'Thibaut ALI', detail: 'Titulaire du compte · né le 18 mars 1992', marker: '' },
   { label: '+33 6 .. .. .. 42', detail: 'Téléphone mobile — vérifié', marker: '✓' },
+  { label: 'thibaut.a@...', detail: 'Courriel de contact — vérifié', marker: '✓' },
   { label: 'Paris 16e · France', detail: 'Adresse de résidence', marker: 'FR' },
 ];
 
@@ -375,6 +382,7 @@ const explorerGuides: Record<string, ExplorerGuide> = {
 export default function App() {
   const [fontsLoaded] = useFonts({
     CormorantGaramond_600SemiBold,
+    EBGaramond_400Regular_Italic,
     Jost_400Regular,
     Jost_500Medium,
     Jost_700Bold,
@@ -451,28 +459,29 @@ export default function App() {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.stage}>
-      <View style={[styles.deviceFrame, Platform.OS !== 'web' && styles.nativeDeviceFrame]}>
+    <SafeAreaProvider>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.stage}>
+        <View style={[styles.deviceFrame, Platform.OS !== 'web' && styles.nativeDeviceFrame]}>
         <LinearGradient
-          colors={[scene.bgBright, scene.bg, scene.bgDeep, scene.bgDarker]}
-          locations={[0, 0.32, 0.72, 1]}
+          colors={screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? ['#041E0C', '#041E0C'] : [scene.bgBright, scene.bg, scene.bgDeep, scene.bgDarker]}
+          locations={screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? [0, 1] : [0, 0.32, 0.72, 1]}
           start={{ x: 0.36, y: 0 }}
           end={{ x: 0.58, y: 1 }}
           style={styles.gradient}
         >
           <SafeAreaView
+            edges={['top', 'bottom']}
             style={[
               styles.app,
               { backgroundColor: sceneName === 'transactional' ? scene.bg : 'transparent' },
-              Platform.OS === 'android' && { paddingTop: StatusBar.currentHeight ?? 0 },
             ]}
           >
         <StatusBar
           barStyle={isLight ? 'dark-content' : 'light-content'}
-          backgroundColor={scene.bg}
+          backgroundColor={screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? '#041E0C' : scene.bg}
         />
         <ToastNotification visible={Boolean(toast)} text={toast} scene={scene} />
-        {screen === 'home' ? null : (
+        {screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? null : (
           <View style={styles.topChrome}>
             <View style={[styles.statusPill, { backgroundColor: 'rgba(0,0,0,0.22)', borderColor: scene.borderSoft }]}>
               <Text style={[styles.statusText, { color: scene.textSecondary }]}>{liveWeather.city}</Text>
@@ -487,28 +496,31 @@ export default function App() {
           </View>
         )}
         <ScrollView
+          style={styles.mainScroll}
           contentContainerStyle={[
             styles.scrollContent,
             screen === 'home' && styles.homeScrollContent,
-            screen !== 'home' && styles.scrollContentWithDock,
+            (screen === 'weather' || screen === 'stay' || screen === 'currency') && styles.weatherScrollContent,
+            screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && styles.scrollContentWithDock,
           ]}
           showsVerticalScrollIndicator={false}
+          scrollEnabled={screen !== 'home' && screen !== 'weather' && screen !== 'currency'}
           keyboardShouldPersistTaps="handled"
         >
           {screen === 'home' ? (
             <HomeScreen navigate={navigate} notify={notify} weather={liveWeather} awake={solyAwake} onWake={() => setSolyAwake(true)} />
           ) : screen === 'stay' ? (
-            <StayScreen onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} />
+            <StayScreen onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} onClose={goBack} />
           ) : screen === 'butler' ? (
             <ButlerScreen notify={notify} />
           ) : screen === 'weather' ? (
-            <WeatherScreen weather={liveWeather} />
+            <WeatherScreen weather={liveWeather} onClose={goBack} />
           ) : screen === 'companions' ? (
             <CompanionsScreen navigate={navigate} shareLocation={shareLocation} />
           ) : screen === 'explore' ? (
             <ExploreScreen city={liveWeather.city} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
           ) : screen === 'currency' ? (
-            <CurrencyScreen exchangeRate={exchangeRate} />
+            <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} onClose={goBack} />
           ) : screen === 'sos' ? (
             <SosScreen onSelect={setSelectedEmergency} notify={notify} />
           ) : screen === 'arrival' ? (
@@ -524,7 +536,7 @@ export default function App() {
           )}
         </ScrollView>
 
-        {screen !== 'home' ? (
+        {screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' ? (
           <View style={[styles.bottomDock, { borderColor: scene.borderSoft, backgroundColor: scene.bgDeep }]}>
             <DockIconButton icon="arrow-back-ios-new" label="Retour" scene={scene} onPress={goBack} />
             <DockIconButton
@@ -592,8 +604,9 @@ export default function App() {
         {messagesOpen ? <MessageCenterOverlay onClose={() => setMessagesOpen(false)} notify={notify} /> : null}
           </SafeAreaView>
         </LinearGradient>
-      </View>
-    </KeyboardAvoidingView>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaProvider>
   );
 }
 
@@ -670,6 +683,7 @@ function HomeScreen({
   const fade = useFadeUp();
   const ringPlayer = useAudioPlayer(solyRing);
   const [arrivalSheetOpen, setArrivalSheetOpen] = useState(false);
+  const [formalitiesSheetOpen, setFormalitiesSheetOpen] = useState(false);
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [solyRequestOpen, setSolyRequestOpen] = useState(false);
   const [homeEmergencyOpen, setHomeEmergencyOpen] = useState(false);
@@ -693,16 +707,16 @@ function HomeScreen({
           style={[styles.homeAccountPill, { backgroundColor: 'rgba(10,51,31,0.48)', borderColor: scene.borderSoft }]}
         >
           <View style={[styles.homeAccountInitial, { backgroundColor: scene.accentDeep }]}>
-            <Text style={[styles.homeAccountInitialText, { color: scene.textPrimary }]}>Z</Text>
+            <Text style={[styles.homeAccountInitialText, { color: scene.accentPrimary }]}>T</Text>
           </View>
-          <Text style={[styles.homeAccountName, { color: scene.textPrimary }]}>ZAKARIA F.</Text>
+          <Text style={[styles.homeAccountName, { color: scene.accentPrimary }]}>Thibaut</Text>
           <Text style={[styles.homeAccountCaret, { color: scene.accentPrimary }]}>⌄</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.homeHeader}>
-        <Text style={[styles.homeGreeting, { color: scene.accentPrimary }]}>Bonjour Zakaria</Text>
-        <Text style={[styles.homeMeta, { color: scene.textSecondary }]}>Vendredi 22 mai · {weather.city} · {weather.days[0]?.temp ?? '—'}</Text>
+        <Text style={[styles.homeGreeting, { color: scene.accentPrimary }]}>Bonjour, Thibaut</Text>
+        <Text style={[styles.homeMeta, { color: scene.textPrimary }]}>Vendredi 15 mai  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '27°C'}</Text>
       </View>
 
       <TouchableOpacity
@@ -715,36 +729,31 @@ function HomeScreen({
 
       <View style={styles.homeBrand}>
         <Text style={[styles.homeLogo, { color: scene.accentPrimary }]}>SOLÝ</Text>
-        <Text style={[styles.homeSubtitle, { color: scene.textPrimary }]}>{awake ? 'SOLÝ À VOTRE SERVICE' : 'SOLÝ EN VEILLE'}</Text>
-      </View>
-
-      <View style={styles.homeDivider}>
-        <View style={[styles.dividerLine, { backgroundColor: scene.borderSoft }]} />
-        <Text style={[styles.dividerDiamond, { color: scene.accentPrimary }]}>◆</Text>
-        <View style={[styles.dividerLine, { backgroundColor: scene.borderSoft }]} />
-      </View>
-
-      <View style={styles.homeIntro}>
-        <Text style={[styles.homeLead, { color: scene.textSecondary }]}>
-          {awake ? 'Votre majordome est à votre écoute.' : 'Votre majordome veille en silence.'}
-        </Text>
-        <Text style={[styles.homeLead, { color: scene.textSecondary }]}>
-          {awake ? 'Dites-lui ce que vous souhaitez.' : 'Sollicitez-le quand vous le souhaitez.'}
-        </Text>
+        <Text style={[styles.homeSubtitle, { color: scene.textPrimary }]}>VOTRE MAJORDOME</Text>
       </View>
 
       <HomeStayActions
-        disabled={!awake}
+        disabled={false}
         onArrival={() => setArrivalSheetOpen(true)}
-        onFormalities={() => navigate('formalities', 8)}
+        onFormalities={() => {
+          Vibration.vibrate(8);
+          setFormalitiesSheetOpen(true);
+        }}
       />
+
+      <TouchableOpacity activeOpacity={0.75} onPress={wakeSoly} style={styles.homeWakePrompt}>
+        <View style={[styles.homeWakeDot, { backgroundColor: scene.accentPrimary }]} />
+        <Text style={[styles.homeWakeText, { color: scene.accentPrimary }]}>TOUCHER SOLÝ POUR ACTIVER</Text>
+        <View style={[styles.homeWakeDot, { backgroundColor: scene.accentPrimary }]} />
+      </TouchableOpacity>
 
       <View style={styles.homeModuleGrid}>
         {homeModuleRows.map((row) => (
           <View key={row.map((item) => item.key).join('-')} style={styles.homeModuleRow}>
             {row.map((item) => {
               const isButlerTile = item.key === 'butler';
-              const isLocked = !awake && !isButlerTile;
+              const isSosTile = item.key === 'sos';
+              const isLocked = false;
 
               return (
                 <TouchableOpacity
@@ -757,22 +766,26 @@ function HomeScreen({
                       setSolyRequestOpen(true);
                       return;
                     }
+                    if (isSosTile) {
+                      Vibration.vibrate(8);
+                      setHomeEmergencyOpen(true);
+                      return;
+                    }
 
                     navigate(item.key, 8);
                   }}
                   style={[
                     styles.homeModuleTile,
-                    { backgroundColor: scene.surface, borderColor: scene.borderSoft },
+                    {
+                      backgroundColor: isSosTile ? 'rgba(117,25,27,0.18)' : '#062610',
+                      borderColor: isSosTile ? 'rgba(230,45,49,0.42)' : '#173A1E',
+                    },
                     isLocked && styles.homeModuleTileLocked,
                   ]}
                 >
-                  {isButlerTile ? (
-                    <Image source={awake ? solyAwake : solyResting} resizeMode="contain" style={styles.tileMascot} />
-                  ) : (
-                    <Text style={[styles.homeModuleIcon, { color: scene.accentPrimary }]}>{item.icon}</Text>
-                  )}
+                  <MaterialIcons name={item.icon} size={21} color={isSosTile ? '#E62D31' : '#CFA055'} style={styles.homeModuleIcon} />
                   <View style={styles.homeTileCopy}>
-                    <Text style={[styles.homeModuleLabel, { color: scene.textPrimary }]}>{item.label}</Text>
+                    <Text style={[styles.homeModuleLabel, { color: isSosTile ? '#F05B5E' : scene.textPrimary }]}>{item.label}</Text>
                     <Text style={[styles.homeModuleKicker, { color: scene.textMuted }]}>{item.kicker}</Text>
                   </View>
                 </TouchableOpacity>
@@ -782,12 +795,12 @@ function HomeScreen({
         ))}
       </View>
 
-      <TouchableOpacity activeOpacity={0.78} onPress={() => setHomeEmergencyOpen(true)} style={styles.homeSosButton}>
-        <MaterialIcons name="phone" size={24} color="#B95A3A" />
-        <Text style={styles.homeSosText}>SOS</Text>
-      </TouchableOpacity>
-
-      <HomeEmergencySheet visible={homeEmergencyOpen} onClose={() => setHomeEmergencyOpen(false)} notify={notify} />
+      <HomeEmergencySheet
+        visible={homeEmergencyOpen}
+        weather={weather}
+        onClose={() => setHomeEmergencyOpen(false)}
+        notify={notify}
+      />
 
       <ArrivalModeSheet
         visible={arrivalSheetOpen}
@@ -797,11 +810,15 @@ function HomeScreen({
           notify('Arrivée confirmée · chauffeur informé', [12, 30, 12]);
         }}
       />
+      <FormalitiesSheet
+        visible={formalitiesSheetOpen}
+        onClose={() => setFormalitiesSheetOpen(false)}
+        notify={notify}
+      />
       <SolyRequestSheet
         visible={solyRequestOpen}
         onClose={() => setSolyRequestOpen(false)}
         onRing={() => {
-          setSolyRequestOpen(false);
           wakeSoly();
           notify('SOLÝ est prévenu · un majordome arrive dans le chat', [12, 30, 12]);
         }}
@@ -813,10 +830,12 @@ function HomeScreen({
 
 function HomeEmergencySheet({
   visible,
+  weather,
   onClose,
   notify,
 }: {
   visible: boolean;
+  weather: LiveWeatherState;
   onClose: () => void;
   notify: (message: string, pattern?: number | number[]) => void;
 }) {
@@ -827,8 +846,8 @@ function HomeEmergencySheet({
   const directNumbers = [
     { label: 'Medical - SAMU', detail: 'Cellule urgence + partenaires medicaux', number: '15', tone: '#C95A48' },
     { label: 'Police', detail: 'Zones urbaines - dispatch securite', number: '19', tone: '#C95A48' },
-    { label: 'Gendarmerie', detail: 'Zones rurales & autoroutes', number: '177', tone: '#E6C982' },
-    { label: 'SOS Medecins - Marrakech', detail: 'Medecin a domicile 24/7', number: '0524404040', display: '0524 40 40 40', tone: '#E6C982' },
+    { label: 'Gendarmerie', detail: 'Zones rurales & autoroutes', number: '177', tone: '#CFA055' },
+    { label: 'SOS Medecins - Marrakech', detail: 'Medecin a domicile 24/7', number: '0524404040', display: '0524 40 40 40', tone: '#CFA055' },
   ];
   const openDialer = async () => {
     if (!pendingCall) return;
@@ -843,72 +862,99 @@ function HomeEmergencySheet({
   };
 
   return (
-    <View style={styles.homeEmergencyPanel}>
-      <View style={styles.homeEmergencyHandle} />
-      <View style={styles.homeEmergencyHeader}>
-        <View style={styles.homeEmergencyIcon}>
-          <MaterialIcons name="phone" size={23} color="#C15D42" />
+    <Modal
+      animationType="slide"
+      navigationBarTranslucent={false}
+      statusBarTranslucent={false}
+      transparent={false}
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <SafeAreaView edges={['top', 'bottom']} style={styles.urgentSafeArea}>
+        <StatusBar barStyle="light-content" backgroundColor="#041E0C" />
+        <View style={styles.urgentTop}>
+          <View style={styles.atmosphereAccountRow}>
+            <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(207,160,85,0.35)' }]}>
+              <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
+                <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
+              </View>
+              <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+              <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
+            </View>
+          </View>
+          <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+          <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '—'}</Text>
+          <Image source={solyResting} resizeMode="contain" style={styles.urgentMascotPeek} />
         </View>
-        <View style={styles.homeEmergencyTitleCopy}>
-          <Text style={styles.homeEmergencyTitle}>Urgence</Text>
-          <Text style={styles.homeEmergencySubtitle}>CELLULE 24/7 - APPEL APRES CONFIRMATION</Text>
-        </View>
-        <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.homeEmergencyClose}>
-          <MaterialIcons name="close" size={18} color="#EDE5D0" />
-        </TouchableOpacity>
-      </View>
 
-      <Text style={styles.homeEmergencyIntro}>
-        En cas d'urgence, SOLY vous met en relation immediate. Un appel n'est lance qu'apres confirmation - aucun declenchement accidentel.
-      </Text>
-
-      <TouchableOpacity
-        activeOpacity={0.78}
-        onPress={() => setPendingCall({ label: "cellule d'urgence", number: '112' })}
-        style={styles.homeEmergencyCallCard}
-      >
-        <MaterialIcons name="phone" size={27} color="#C15D42" />
-        <View style={styles.homeEmergencyCallCopy}>
-          <Text style={styles.homeEmergencyCallTitle}>Appeler la cellule d'urgence</Text>
-          <Text style={styles.homeEmergencyCallMeta}>112 - connecte au service le plus proche</Text>
-        </View>
-      </TouchableOpacity>
-
-      {pendingCall ? (
-        <View style={styles.homeEmergencyConfirm}>
-          <Text style={styles.homeEmergencyConfirmText}>
-            Confirmer l'appel vers {pendingCall.label} ({pendingCall.number}) ?
-          </Text>
-          <View style={styles.homeEmergencyConfirmActions}>
-            <TouchableOpacity activeOpacity={0.72} onPress={() => setPendingCall(null)} style={styles.homeEmergencyCancelButton}>
-              <Text style={styles.homeEmergencyCancelText}>Annuler</Text>
-            </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.78} onPress={openDialer} style={styles.homeEmergencyConfirmButton}>
-              <MaterialIcons name="phone" size={15} color="#2B120F" />
-              <Text style={styles.homeEmergencyConfirmButtonText}>Appeler</Text>
+        <View style={styles.urgentSheet}>
+          <View style={styles.atmosphereHandle} />
+          <View style={styles.atmosphereTitleRow}>
+            <Text style={styles.atmosphereTitle}>Urgences</Text>
+            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.atmosphereClose}>
+              <MaterialIcons name="close" size={23} color="#A6B0A5" />
             </TouchableOpacity>
           </View>
-        </View>
-      ) : null}
+          <View style={styles.atmosphereRule} />
 
-      <HomeEmergencySectionLabel label="NUMEROS DIRECTS - MAROC" />
-      {directNumbers.map((item) => (
-        <TouchableOpacity
-          key={item.label}
-          activeOpacity={0.76}
-          onPress={() => setPendingCall({ label: item.label, number: item.number })}
-          style={styles.homeEmergencyRow}
-        >
-          <View style={[styles.homeEmergencyDot, { backgroundColor: item.tone }]} />
-          <View style={styles.homeEmergencyRowCopy}>
-            <Text style={styles.homeEmergencyRowTitle}>{item.label}</Text>
-            <Text style={styles.homeEmergencyRowMeta}>{item.detail}</Text>
+          <View style={styles.urgentIntroCard}>
+            <Text style={styles.urgentIntroText}>
+              En cas d’urgence, SOLÝ vous met en relation immédiate. Un appel n’est lancé qu’après confirmation — aucun déclenchement accidentel.
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.78}
+              onPress={() => setPendingCall({ label: "Cellule d’urgence", number: '112' })}
+              style={styles.urgentPrimaryCall}
+            >
+              <MaterialIcons name="phone-in-talk" size={22} color="#F6F0E8" />
+              <View>
+                <Text style={styles.urgentPrimaryTitle}>Appeler la cellule d’urgence</Text>
+                <Text style={styles.urgentPrimaryMeta}>112 · connecté au service le plus proche</Text>
+              </View>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.homeEmergencyRowValue}>{item.display ?? item.number}</Text>
-        </TouchableOpacity>
-      ))}
 
-    </View>
+          <View style={styles.urgentNumbersCard}>
+            <Text style={styles.urgentNumbersTitle}>Numéros directs · Maroc</Text>
+            {directNumbers.map((item) => (
+              <TouchableOpacity
+                key={item.label}
+                activeOpacity={0.76}
+                onPress={() => setPendingCall({ label: item.label, number: item.number })}
+                style={[styles.urgentNumberRow, { borderColor: item.tone }]}
+              >
+                <View style={[styles.homeEmergencyDot, { backgroundColor: item.tone }]} />
+                <View style={styles.homeEmergencyRowCopy}>
+                  <Text style={styles.urgentNumberLabel}>{item.label.replace('Medical', 'Médical').replace('Medecins', 'Médecins')}</Text>
+                  <Text style={styles.urgentNumberDetail}>{item.detail.replace('medicaux', 'médicaux').replace('securite', 'sécurité').replace('domicile', 'domicile')}</Text>
+                </View>
+                <Text style={styles.urgentNumberValue}>{item.display ?? item.number}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {pendingCall ? (
+          <View style={styles.urgentConfirmOverlay}>
+            <View style={styles.urgentConfirmCard}>
+              <Text style={styles.urgentConfirmTitle}>Lancer l’appel d’urgence ?</Text>
+              <Text style={styles.urgentConfirmDestination}>{pendingCall.label} · {pendingCall.number}</Text>
+              <Text style={styles.urgentConfirmText}>
+                Confirmez pour passer l’appel. Cette étape évite tout déclenchement accidentel.
+              </Text>
+              <View style={styles.urgentConfirmActions}>
+                <TouchableOpacity activeOpacity={0.72} onPress={() => setPendingCall(null)} style={styles.urgentCancelButton}>
+                  <Text style={styles.urgentCancelText}>ANNULER</Text>
+                </TouchableOpacity>
+                <TouchableOpacity activeOpacity={0.78} onPress={openDialer} style={styles.urgentCallButton}>
+                  <Text style={styles.urgentCallText}>APPELER</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -928,7 +974,13 @@ function SolyRequestSheet({
   const scene = scenes.immersive;
   const [request, setRequest] = useState('');
   const [selectedDay, setSelectedDay] = useState('today');
-  const [selectedSlot, setSelectedSlot] = useState('afternoon');
+  const [selectedSlot, setSelectedSlot] = useState('now');
+  const [mode, setMode] = useState<'request' | 'chat'>('request');
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatMessages, setChatMessages] = useState([
+    { id: 'soly-1', from: 'soly', text: 'Je suis à votre service, Thibaut. Je traite votre demande.', time: 'Aujourd’hui · 19h42' },
+    { id: 'soly-2', from: 'me', text: 'Bonjour', time: 'Aujourd’hui · 19h42' },
+  ]);
   const days = useMemo(() => {
     const today = new Date();
 
@@ -953,69 +1005,78 @@ function SolyRequestSheet({
     { key: 'evening', label: 'Soirée', meta: 'à partir de 19h' },
   ];
 
+  useEffect(() => {
+    if (visible) setMode('request');
+  }, [visible]);
+
+  const openChat = (withRequest = false) => {
+    if (withRequest && request.trim()) {
+      setChatMessages((current) => [
+        ...current,
+        { id: `soly-${Date.now()}`, from: 'me', text: request.trim(), time: 'Maintenant' },
+      ]);
+    }
+    if (withRequest) onRing();
+    setMode('chat');
+  };
+
+  const sendChatMessage = () => {
+    const clean = chatDraft.trim();
+    if (!clean) return;
+    setChatMessages((current) => [...current, { id: `soly-${Date.now()}`, from: 'me', text: clean, time: 'Maintenant' }]);
+    setChatDraft('');
+    Vibration.vibrate(8);
+  };
+
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <Modal
+      animationType="slide"
+      navigationBarTranslucent={false}
+      statusBarTranslucent={false}
+      transparent
+      visible={visible}
+      onRequestClose={onClose}
+    >
       <View style={styles.solyRequestRoot}>
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.solyRequestBackdrop} />
-        <View style={[styles.solyRequestSheet, { backgroundColor: scene.bg, borderColor: scene.borderSoft }]}>
-          <View style={[styles.solyRequestHandle, { backgroundColor: scene.borderSoft }]} />
+        <View style={[styles.solyRequestSheet, styles.solyModernSheet]}>
+          <View style={styles.solyModernHandle} />
           <View style={[styles.solyRequestHeader, { borderBottomColor: scene.borderSoft }]}>
-            <View style={[styles.solyRequestHeaderIcon, { borderColor: scene.border, backgroundColor: scene.surface }]}>
-              <Text style={[styles.solyRequestHeaderIconText, { color: scene.accentPrimary }]}>♧</Text>
-            </View>
             <View style={styles.solyRequestHeaderCopy}>
-              <Text style={[styles.solyRequestTitle, { color: scene.accentPrimary }]}>Solliciter SOLÝ</Text>
-              <Text style={[styles.solyRequestSubtitle, { color: scene.textSecondary }]}>SONNEZ QUAND VOUS VOULEZ</Text>
+              <Text style={styles.solyModernTitle}>Solliciter SOLÝ</Text>
             </View>
-            <TouchableOpacity
-              activeOpacity={0.72}
-              onPress={onClose}
-              style={[styles.solyRequestClose, { borderColor: scene.border }]}
-            >
-              <Text style={[styles.solyRequestCloseText, { color: scene.accentPrimary }]}>×</Text>
+            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
+              <MaterialIcons name="close" size={23} color="#A6B0A5" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView
-            style={styles.solyRequestScroll}
-            contentContainerStyle={styles.solyRequestContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={styles.solyRequestHero}>
-              <View style={[styles.solyRequestBellHalo, { borderColor: scene.borderSoft }]}>
-                <View style={[styles.solyRequestBellCore, { backgroundColor: 'rgba(230,201,130,0.08)' }]}>
-                  <Text style={[styles.solyRequestBellGlyph, { color: scene.accentPrimary }]}>♧</Text>
-                </View>
-              </View>
-              <Text style={[styles.solyRequestEyebrow, { color: scene.accentPrimary }]}>
-                — SOLÝ · À VOTRE HUMBLE DISPOSITION —
+          {mode === 'request' ? (
+            <ScrollView
+              style={styles.solyRequestScroll}
+              contentContainerStyle={styles.solyModernContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.solyModernPrompt}>
+                Comment puis-je <Text style={styles.solyModernPromptAccent}>vous servir,</Text> Thibaut ?
               </Text>
-              <Text style={[styles.solyRequestPrompt, { color: scene.textPrimary }]}>
-                Comment puis-je{'\n'}
-                <Text style={styles.solyRequestPromptAccent}>vous servir,</Text>
-                {'\n'}Camille ?
-              </Text>
-              <Text style={[styles.solyRequestNote, { color: scene.textMuted }]}>
-                Confiez-moi votre envie, je m'occupe de tout.
-              </Text>
-            </View>
+              <Text style={styles.solyModernNote}>Confiez-moi votre envie — je m’occupe de tout.</Text>
 
-            <View style={[styles.solyRequestFieldCard, { borderColor: scene.border, backgroundColor: scene.surface }]}>
-              <Text style={[styles.solyRequestSectionLabel, { color: scene.accentPrimary }]}>— VOTRE DEMANDE</Text>
+              <SolyRequestPickerLabel label="Votre demande" scene={scene} />
+              <View style={styles.solyModernRequestField}>
               <TextInput
                 value={request}
                 onChangeText={setRequest}
                 multiline
                 textAlignVertical="top"
-                placeholder="Décrivez librement vos envies. SOLÝ se charge de tout. Merci de me préciser le nombre de personnes, le jour et le créneau souhaité."
-                placeholderTextColor={scene.textMuted}
-                style={[styles.solyRequestInput, { color: scene.textPrimary }]}
+                  placeholder="Décrivez librement vos envies. Merci de me préciser le nombre de personnes, le jour et le créneau souhaité."
+                  placeholderTextColor="#A79E96"
+                  style={styles.solyModernRequestInput}
               />
-            </View>
+              </View>
 
-            <SolyRequestPickerLabel label="Pour quel jour ?" scene={scene} />
-            <View style={styles.solyRequestChoiceGrid}>
+              <SolyRequestPickerLabel label="Pour quel jour ?" scene={scene} />
+              <View style={styles.solyRequestChoiceGrid}>
               {days.map((day) => {
                 const active = selectedDay === day.key;
 
@@ -1028,7 +1089,7 @@ function SolyRequestSheet({
                       styles.solyRequestDayButton,
                       {
                         borderColor: active ? scene.accentPrimary : scene.border,
-                        backgroundColor: active ? 'rgba(230,201,130,0.08)' : scene.surface,
+                          backgroundColor: active ? 'rgba(207,160,85,0.08)' : '#0A2C1B',
                       },
                     ]}
                   >
@@ -1038,10 +1099,10 @@ function SolyRequestSheet({
                   </TouchableOpacity>
                 );
               })}
-            </View>
+              </View>
 
-            <SolyRequestPickerLabel label="Pour quel créneau ?" scene={scene} />
-            <View style={styles.solyRequestChoiceGrid}>
+              <SolyRequestPickerLabel label="Pour quel créneau ?" scene={scene} />
+              <View style={styles.solyRequestChoiceGrid}>
               {slots.map((slot) => {
                 const active = selectedSlot === slot.key;
 
@@ -1054,7 +1115,7 @@ function SolyRequestSheet({
                       styles.solyRequestSlotButton,
                       {
                         borderColor: active ? scene.accentPrimary : scene.border,
-                        backgroundColor: active ? 'rgba(230,201,130,0.08)' : scene.surface,
+                          backgroundColor: active ? 'rgba(207,160,85,0.08)' : '#0A2C1B',
                       },
                     ]}
                   >
@@ -1063,15 +1124,46 @@ function SolyRequestSheet({
                   </TouchableOpacity>
                 );
               })}
-            </View>
+              </View>
 
-            <TouchableOpacity activeOpacity={0.84} onPress={onRing} style={[styles.solyRequestRingButton, { backgroundColor: scene.accentPrimary }]}>
-              <Text style={[styles.solyRequestRingText, { color: scene.bgDeep }]}>SONNER SOLÝ →</Text>
-            </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.72} onPress={onRing} style={styles.solyRequestChatLink}>
-              <Text style={[styles.solyRequestChatLinkText, { color: scene.textSecondary }]}>Échanger en chat avec un majordome</Text>
-            </TouchableOpacity>
-          </ScrollView>
+              <TouchableOpacity activeOpacity={0.84} onPress={() => openChat(true)} style={styles.solyModernRingButton}>
+                <Text style={styles.solyModernRingText}>SONNER SOLÝ</Text>
+                <MaterialIcons name="arrow-forward" size={22} color="#092416" />
+              </TouchableOpacity>
+              <TouchableOpacity activeOpacity={0.72} onPress={() => openChat(false)} style={styles.solyRequestChatLink}>
+                <Text style={styles.solyModernChatLink}>Échanger en chat avec un majordome</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          ) : (
+            <View style={styles.solyChatBody}>
+              <ScrollView contentContainerStyle={styles.solyChatMessages} showsVerticalScrollIndicator={false}>
+                {chatMessages.map((message) => {
+                  const mine = message.from === 'me';
+                  return (
+                    <View key={message.id} style={[styles.solyChatMessageRow, mine ? styles.solyChatMessageRowMine : styles.solyChatMessageRowSoly]}>
+                      <View style={[styles.solyChatBubble, mine ? styles.solyChatBubbleMine : styles.solyChatBubbleSoly]}>
+                        <Text style={styles.solyChatMessageText}>{message.text}</Text>
+                        <Text style={styles.solyChatMessageTime}>{message.time}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+              <View style={styles.solyChatComposer}>
+                <TextInput
+                  value={chatDraft}
+                  onChangeText={setChatDraft}
+                  onSubmitEditing={sendChatMessage}
+                  placeholder="Écrire un message..."
+                  placeholderTextColor="#879A8D"
+                  style={styles.solyChatInput}
+                />
+                <TouchableOpacity activeOpacity={0.78} onPress={sendChatMessage} style={styles.solyChatSend}>
+                  <MaterialIcons name="chevron-right" size={23} color="#092416" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -1088,146 +1180,488 @@ function SolyRequestPickerLabel({ label, scene }: { label: string; scene: typeof
 }
 
 function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const [openSections, setOpenSections] = useState<Record<AccountSection, boolean>>({
-    advantages: true,
-    personal: false,
-    payment: false,
-    privacy: false,
-    guests: false,
+  const [activeSection, setActiveSection] = useState<AccountSection | ''>('');
+  const [paymentDeleteConfirm, setPaymentDeleteConfirm] = useState(false);
+  const [paymentRemoved, setPaymentRemoved] = useState(false);
+  const [paymentEntryOpen, setPaymentEntryOpen] = useState(false);
+  const [inviteGuestOpen, setInviteGuestOpen] = useState(false);
+  const [privacySettings, setPrivacySettings] = useState({
+    location: true,
+    notifications: true,
   });
+  const detailExpanded =
+    activeSection === 'advantages' ||
+    activeSection === 'personal' ||
+    activeSection === 'payment' ||
+    activeSection === 'privacy';
 
-  const toggleSection = (section: AccountSection) => {
-    setOpenSections((current) => ({ ...current, [section]: !current[section] }));
-    Vibration.vibrate(5);
+  const syncPrivacyPermissions = async () => {
+    const [locationPermission, notificationPermission] = await Promise.all([
+      Location.getForegroundPermissionsAsync(),
+      Notifications.getPermissionsAsync(),
+    ]);
+    setPrivacySettings({
+      location: locationPermission.status === 'granted',
+      notifications: notificationPermission.status === 'granted',
+    });
   };
 
+  useEffect(() => {
+    if (!visible) return undefined;
+
+    void syncPrivacyPermissions();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncPrivacyPermissions();
+    });
+    return () => subscription.remove();
+  }, [visible]);
+
+  const togglePhonePermission = async (key: 'location' | 'notifications') => {
+    Vibration.vibrate(5);
+    if (privacySettings[key]) {
+      await Linking.openSettings();
+      return;
+    }
+
+    const permission =
+      key === 'location'
+        ? await Location.requestForegroundPermissionsAsync()
+        : await Notifications.requestPermissionsAsync();
+
+    setPrivacySettings((current) => ({
+      ...current,
+      [key]: permission.status === 'granted',
+    }));
+
+    if (permission.status !== 'granted' && !permission.canAskAgain) {
+      await Linking.openSettings();
+    }
+  };
+  const sections: { key: AccountSection; title: string; subtitle: string; icon: React.ComponentProps<typeof MaterialIcons>['name'] }[] = [
+    { key: 'advantages', title: 'Vos avantages', subtitle: 'Statut Habitué · accès prioritaire', icon: 'star-outline' },
+    { key: 'personal', title: 'Données personnelles', subtitle: 'Profil et coordonnées', icon: 'person-outline' },
+    { key: 'payment', title: 'Paiement', subtitle: 'Visa Infinite · •••• 6411', icon: 'credit-card' },
+    { key: 'privacy', title: 'Confidentialité', subtitle: 'Permissions et préférences', icon: 'lock-outline' },
+    { key: 'guests', title: 'Inviter un convive', subtitle: 'Partager une invitation au séjour', icon: 'person-add-alt' },
+  ];
+
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
-      <View style={styles.accountModalRoot}>
+    <Modal
+      animationType="slide"
+      navigationBarTranslucent={false}
+      statusBarTranslucent={false}
+      transparent
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.accountModernRoot}>
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.accountBackdrop} />
-        <View style={styles.accountSheet}>
-          <View style={styles.accountHandle} />
-          <View style={styles.accountHeader}>
-            <View style={styles.accountHeaderIcon}>
-              <Text style={styles.accountHeaderIconText}>♙</Text>
+        <View style={styles.accountModernSheet}>
+          <View style={styles.solyModernHandle} />
+          <View style={styles.accountModernHeader}>
+            <Text style={styles.accountModernTitle}>Votre compte</Text>
+            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
+              <MaterialIcons name="close" size={23} color="#A6B0A5" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.atmosphereRule} />
+
+          <View style={styles.accountModernContent}>
+            <View style={styles.accountModernHero}>
+              <View style={styles.accountModernHeroTop}>
+                <Text style={styles.accountModernSince}>MEMBRE DEPUIS 2021</Text>
+                <View style={styles.accountModernTierBadge}>
+                  <Text style={styles.accountModernTierText}>HABITUÉ</Text>
+                </View>
+              </View>
+              <Text style={styles.accountModernName}>Thibaut</Text>
+              <Text style={styles.accountModernClient}>N° SLV–04287</Text>
+              <View style={styles.accountModernProgressLabels}>
+                <Text style={styles.accountModernProgressLabel}>HABITUÉ</Text>
+                <Text style={styles.accountModernProgressValue}>42% vers HÔTE</Text>
+                <Text style={styles.accountModernProgressLabel}>HÔTE</Text>
+              </View>
+              <View style={styles.accountModernProgressTrack}>
+                <View style={styles.accountModernProgressFill} />
+              </View>
+              <Text style={styles.accountModernProgressNote}>42% vers le statut Hôte</Text>
             </View>
-            <View style={styles.accountHeaderCopy}>
-              <Text style={styles.accountTitle}>Votre compte</Text>
-              <Text style={styles.accountSubtitle}>ZAKARIA F. · MEMBRE HABITUÉ</Text>
+
+            <View style={[styles.accountModernMenu, detailExpanded && styles.accountModernMenuExpanded]}>
+              {(detailExpanded ? sections.filter((section) => section.key === activeSection) : sections).map((section) => {
+                const active = activeSection === section.key;
+                return (
+                  <View
+                    key={section.key}
+                    style={[
+                      active && detailExpanded && styles.accountAdvantageExpanded,
+                      active && section.key === 'payment' && styles.accountPaymentExpanded,
+                      active && section.key === 'privacy' && styles.accountPrivacyExpanded,
+                    ]}
+                  >
+                    <TouchableOpacity
+                      activeOpacity={0.76}
+                      onPress={() => {
+                        Vibration.vibrate(5);
+                        if (section.key === 'guests') {
+                          setInviteGuestOpen(true);
+                          return;
+                        }
+                        setActiveSection(active ? '' : section.key);
+                      }}
+                      style={[
+                        styles.accountModernRow,
+                        active && styles.accountModernRowActive,
+                        active && detailExpanded && styles.accountModernRowExpanded,
+                      ]}
+                    >
+                      <MaterialIcons name={section.icon} size={23} color="#CFA055" />
+                      <View style={styles.accountModernRowCopy}>
+                        <Text style={styles.accountModernRowTitle}>{section.title}</Text>
+                        <Text style={styles.accountModernRowSubtitle}>{section.subtitle}</Text>
+                      </View>
+                      <MaterialIcons name={active ? 'expand-less' : 'chevron-right'} size={27} color="#CFA055" />
+                    </TouchableOpacity>
+
+                    {active && section.key === 'advantages' ? (
+                      <View style={styles.accountTierList}>
+                        {accountAdvantages.map((item, index) => {
+                          const tones = ['#CFA055', '#D8872D', '#54D786', '#42C1D9'];
+                          const tone = tones[index];
+                          return (
+                            <View key={item.tier} style={[styles.accountTierCardModern, { borderColor: tone }]}>
+                              <View style={styles.accountTierCardTop}>
+                                <Text style={[styles.accountTierCardName, { color: tone }]}>{item.tier}</Text>
+                                {index === 0 ? (
+                                  <View style={styles.accountTierCurrentBadge}>
+                                    <Text style={styles.accountTierCurrentText}>ACTUEL</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                              <Text style={styles.accountTierCardDescription}>{item.description}</Text>
+                              <Text style={styles.accountTierCardNote}>{item.note}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+
+                    {active && section.key === 'personal' ? (
+                      <View style={styles.accountPersonalList}>
+                        {accountPersonalInfo.map((item) => (
+                          <View key={item.label} style={styles.accountPersonalCard}>
+                            <View style={styles.accountPersonalDot} />
+                            <View style={styles.accountPersonalCopy}>
+                              <Text style={styles.accountPersonalLabel}>{item.label}</Text>
+                              <Text style={styles.accountPersonalDetail}>{item.detail}</Text>
+                            </View>
+                            {item.marker ? (
+                              item.marker === '✓' ? (
+                                <MaterialIcons name="check" size={26} color="#54D786" />
+                              ) : (
+                                <Text style={styles.accountPersonalMarker}>{item.marker}</Text>
+                              )
+                            ) : null}
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+
+                    {active && section.key === 'payment' ? (
+                      <View style={styles.accountPaymentContent}>
+                        {!paymentRemoved ? (
+                          <View style={styles.accountModernPaymentCard}>
+                            {!paymentDeleteConfirm ? (
+                              <View style={styles.accountPaymentIcon}>
+                                <MaterialIcons name="credit-card" size={23} color="#CFA055" />
+                              </View>
+                            ) : null}
+                            <View style={styles.accountPaymentCopy}>
+                              <Text style={styles.accountPaymentName}>Visa ···· 4242</Text>
+                              <Text style={styles.accountPaymentExpiry}>Expire 12/27</Text>
+                            </View>
+                            {paymentDeleteConfirm ? (
+                              <View style={styles.accountPaymentConfirmActions}>
+                                <TouchableOpacity
+                                  activeOpacity={0.72}
+                                  onPress={() => setPaymentDeleteConfirm(false)}
+                                  style={styles.accountPaymentCancel}
+                                >
+                                  <Text style={styles.accountPaymentCancelText}>ANNULER</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  activeOpacity={0.72}
+                                  onPress={() => {
+                                    Vibration.vibrate(8);
+                                    setPaymentRemoved(true);
+                                    setPaymentDeleteConfirm(false);
+                                  }}
+                                  style={styles.accountPaymentDelete}
+                                >
+                                  <Text style={styles.accountPaymentDeleteText}>SUPPRIMER</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : (
+                              <>
+                                <View style={styles.accountVisaBadge}>
+                                  <Text style={styles.accountVisaText}>VISA</Text>
+                                </View>
+                                <TouchableOpacity
+                                  activeOpacity={0.72}
+                                  onPress={() => {
+                                    Vibration.vibrate(5);
+                                    setPaymentDeleteConfirm(true);
+                                  }}
+                                  style={styles.accountModernPaymentRemove}
+                                >
+                                  <MaterialIcons name="close" size={23} color="#B6C0B8" />
+                                </TouchableOpacity>
+                              </>
+                            )}
+                          </View>
+                        ) : null}
+
+                        <TouchableOpacity
+                          activeOpacity={0.75}
+                          onPress={() => {
+                            Vibration.vibrate(5);
+                            setPaymentEntryOpen(true);
+                          }}
+                          style={styles.accountAddPayment}
+                        >
+                          <MaterialIcons name="add" size={31} color="#CFA055" />
+                          <Text style={styles.accountAddPaymentText}>Ajouter un moyen de paiement</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+
+                    {active && section.key === 'privacy' ? (
+                      <View style={styles.accountPrivacyList}>
+                        {[
+                          {
+                            key: 'location' as const,
+                            title: 'Géolocalisation',
+                            detail: 'Recommandations et services à proximité',
+                          },
+                          {
+                            key: 'notifications' as const,
+                            title: 'Notifications push',
+                            detail: 'Conciergerie, offres et confirmations',
+                          },
+                        ].map((item) => {
+                          const enabled = privacySettings[item.key];
+                          return (
+                            <TouchableOpacity
+                              key={item.key}
+                              activeOpacity={0.78}
+                              onPress={() => void togglePhonePermission(item.key)}
+                              style={styles.accountPrivacyModernCard}
+                            >
+                              <View style={styles.accountPersonalDot} />
+                              <View style={styles.accountPersonalCopy}>
+                                <Text style={styles.accountPrivacyModernTitle}>{item.title}</Text>
+                                <Text style={styles.accountPrivacyModernDetail}>{item.detail}</Text>
+                              </View>
+                              <View style={[styles.accountPrivacySwitch, enabled && styles.accountPrivacySwitchOn]}>
+                                <View style={[styles.accountPrivacyKnob, enabled && styles.accountPrivacyKnobOn]} />
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
             </View>
-            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.accountClose}>
-              <Text style={styles.accountCloseText}>×</Text>
+          </View>
+        </View>
+        {paymentEntryOpen ? (
+          <PaymentEntrySheet
+            onClose={() => setPaymentEntryOpen(false)}
+            onSave={() => {
+              setPaymentRemoved(false);
+              setPaymentEntryOpen(false);
+            }}
+          />
+        ) : null}
+        {inviteGuestOpen ? <InviteGuestSheet onClose={() => setInviteGuestOpen(false)} /> : null}
+      </View>
+    </Modal>
+  );
+}
+
+function PaymentEntrySheet({ onClose, onSave }: { onClose: () => void; onSave: () => void }) {
+  const [method, setMethod] = useState<'card' | 'paypal'>('card');
+  const [cardNumber, setCardNumber] = useState('');
+  const [expiration, setExpiration] = useState('');
+  const [crypto, setCrypto] = useState('');
+  const [holder, setHolder] = useState('');
+
+  return (
+    <View style={styles.paymentEntryOverlay}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.paymentEntryBackdrop} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.paymentEntrySheet}
+      >
+        <View style={styles.solyModernHandle} />
+        <View style={styles.paymentEntryHeader}>
+          <Text style={styles.paymentEntryTitle}>Paiement</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
+            <MaterialIcons name="close" size={25} color="#A6B0A5" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.atmosphereRule} />
+
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.paymentEntryContent}
+        >
+          <Text style={styles.paymentEntryIntro}>
+            Vos coordonnées ne quittent jamais votre appareil pendant la saisie.{'\n'}
+            Seuls les <Text style={styles.paymentEntryIntroStrong}>quatre derniers chiffres et le type de carte</Text> sont conservés pour affichage.
+          </Text>
+
+          <View style={styles.paymentMethodTabs}>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => setMethod('card')}
+              style={[styles.paymentMethodTab, method === 'card' && styles.paymentMethodTabActive]}
+            >
+              <Text style={styles.paymentMethodText}>Carte bancaire</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => setMethod('paypal')}
+              style={[styles.paymentMethodTab, method === 'paypal' && styles.paymentMethodTabActive]}
+            >
+              <Text style={styles.paymentMethodText}>PayPal</Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView
-            style={styles.accountScroll}
-            contentContainerStyle={styles.accountContent}
-            showsVerticalScrollIndicator={false}
+          {method === 'card' ? (
+            <>
+              <PaymentField label="NUMÉRO DE CARTE" value={cardNumber} onChangeText={setCardNumber} placeholder="0000 0000 0000 0000" keyboardType="number-pad" />
+              <PaymentField label="EXPIRATION" value={expiration} onChangeText={setExpiration} placeholder="MM/AA" keyboardType="number-pad" />
+              <PaymentField label="CRYPTO" value={crypto} onChangeText={setCrypto} placeholder="000" keyboardType="number-pad" secureTextEntry />
+              <PaymentField label="NOM DU TITULAIRE" value={holder} onChangeText={setHolder} placeholder="Comme inscrit sur la carte" autoCapitalize="words" />
+            </>
+          ) : (
+            <PaymentField label="ADRESSE PAYPAL" value={holder} onChangeText={setHolder} placeholder="nom@exemple.com" keyboardType="email-address" autoCapitalize="none" />
+          )}
+
+          <TouchableOpacity activeOpacity={0.78} onPress={onSave} style={styles.paymentEntrySave}>
+            <Text style={styles.paymentEntrySaveText}>ENREGISTRER</Text>
+          </TouchableOpacity>
+          <View style={styles.paymentEntrySecurity}>
+            <MaterialIcons name="lock-outline" size={13} color="#A9B6AD" />
+            <Text style={styles.paymentEntrySecurityText}>Chiffrement TLS · aucune donnée brute conservée</Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+function PaymentField({
+  label,
+  ...inputProps
+}: { label: string } & React.ComponentProps<typeof TextInput>) {
+  return (
+    <View style={styles.paymentField}>
+      <Text style={styles.paymentFieldLabel}>{label}</Text>
+      <TextInput
+        {...inputProps}
+        placeholderTextColor="#829087"
+        selectionColor="#CFA055"
+        style={styles.paymentFieldInput}
+      />
+    </View>
+  );
+}
+
+function InviteGuestSheet({ onClose }: { onClose: () => void }) {
+  const inviteLink = 'https://soly.app/j/SLY-04287-2024-mrk';
+  const inviteMessage = `Rejoignez mon séjour SOLÝ : ${inviteLink}`;
+  const [copied, setCopied] = useState(false);
+
+  const shareInvite = async (channel: 'sms' | 'email' | 'whatsapp' | 'other') => {
+    Vibration.vibrate(5);
+
+    if (channel === 'other') {
+      await Share.share({ title: 'Invitation SOLÝ', message: inviteMessage, url: inviteLink });
+      return;
+    }
+
+    const encodedMessage = encodeURIComponent(inviteMessage);
+    const urls = {
+      sms: Platform.OS === 'ios' ? `sms:&body=${encodedMessage}` : `sms:?body=${encodedMessage}`,
+      email: `mailto:?subject=${encodeURIComponent('Invitation à mon séjour SOLÝ')}&body=${encodedMessage}`,
+      whatsapp: `https://wa.me/?text=${encodedMessage}`,
+    };
+    await Linking.openURL(urls[channel]);
+  };
+
+  return (
+    <View style={styles.inviteGuestOverlay}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.paymentEntryBackdrop} />
+      <View style={styles.inviteGuestSheet}>
+        <View style={styles.solyModernHandle} />
+        <View style={styles.inviteGuestHeader}>
+          <Text style={styles.inviteGuestTitle}>Inviter un convive</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
+            <MaterialIcons name="close" size={25} color="#A6B0A5" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.atmosphereRule} />
+
+        <Text style={styles.inviteGuestIntro}>
+          Conviez vos proches au séjour. Ils retrouveront le programme, les horaires et le chat de groupe dès leur arrivée dans l’app.
+        </Text>
+
+        <View style={styles.inviteLinkCard}>
+          <Text numberOfLines={1} style={styles.inviteLinkText}>{inviteLink}</Text>
+          <TouchableOpacity
+            activeOpacity={0.75}
+            onPress={async () => {
+              await Clipboard.setStringAsync(inviteLink);
+              Vibration.vibrate(5);
+              setCopied(true);
+            }}
+            style={styles.inviteCopyButton}
           >
-            <View style={styles.accountHeroCard}>
-              <View style={styles.accountHeroTop}>
-                <Text style={styles.accountHeroTier}>HABITUÉ</Text>
-                <Text style={styles.accountHeroSince}>MEMBRE DEPUIS 2021</Text>
-              </View>
-              <Text style={styles.accountHeroName}>Zakaria Farouki</Text>
-              <Text style={styles.accountClientId}>N° client · ZF-04287</Text>
-              <View style={styles.accountInnerCard}>
-                <Text style={styles.accountInnerTier}>HABITUÉ</Text>
-                <Text style={styles.accountInnerTagline}>LES HABITUÉS RETROUVENT LEUR MAISON</Text>
-                <View style={styles.accountProgressLabels}>
-                  <Text style={styles.accountProgressLabel}>HABITUÉ</Text>
-                  <Text style={styles.accountProgressMiddle}>42% vers HÔTE</Text>
-                  <Text style={styles.accountProgressLabel}>HÔTE</Text>
-                </View>
-                <View style={styles.accountProgressTrack}>
-                  <View style={styles.accountProgressFill} />
-                </View>
-              </View>
-            </View>
+            <Text style={styles.inviteCopyText}>{copied ? 'COPIÉ' : 'COPIER'}</Text>
+          </TouchableOpacity>
+        </View>
 
-            <AccountSectionBlock title="VOS AVANTAGES" open={openSections.advantages} onToggle={() => toggleSection('advantages')}>
-              {accountAdvantages.map((item) => (
-                <View key={item.tier} style={[styles.accountAdvantageCard, item.active && styles.accountAdvantageCardActive]}>
-                  <View style={[styles.accountTierBadge, item.active && styles.accountTierBadgeActive]}>
-                    <Text style={styles.accountTierBadgeText}>{item.tier}</Text>
-                  </View>
-                  <View style={styles.accountAdvantageCopy}>
-                    <Text style={styles.accountAdvantageDescription}>{item.description}</Text>
-                    <Text style={[styles.accountAdvantageNote, item.active && styles.accountAdvantageNoteActive]}>{item.note}</Text>
-                  </View>
-                </View>
-              ))}
-            </AccountSectionBlock>
+        <View style={styles.inviteChannels}>
+          {[
+            { key: 'sms' as const, label: 'SMS', icon: 'chat-bubble-outline' as const },
+            { key: 'email' as const, label: 'E-mail', icon: 'mail-outline' as const },
+            { key: 'whatsapp' as const, label: 'WhatsApp', icon: 'phone-in-talk' as const },
+            { key: 'other' as const, label: 'Autres', icon: 'more-horiz' as const },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              activeOpacity={0.75}
+              onPress={() => void shareInvite(item.key)}
+              style={styles.inviteChannelButton}
+            >
+              <MaterialIcons name={item.icon} size={21} color="#CFA055" />
+              <Text style={styles.inviteChannelText}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-            <AccountSectionBlock title="DONNÉES PERSONNELLES" open={openSections.personal} onToggle={() => toggleSection('personal')}>
-              {accountPersonalInfo.map((item) => (
-                <View key={item.label} style={styles.accountInfoCard}>
-                  <View style={styles.accountInfoGlow} />
-                  <View style={styles.accountInfoCopy}>
-                    <Text style={styles.accountInfoLabel}>{item.label}</Text>
-                    <Text style={styles.accountInfoDetail}>{item.detail}</Text>
-                  </View>
-                  {item.marker ? <Text style={styles.accountInfoMarker}>{item.marker}</Text> : null}
-                </View>
-              ))}
-            </AccountSectionBlock>
-
-            <AccountSectionBlock title="PAIEMENT" open={openSections.payment} onToggle={() => toggleSection('payment')}>
-              <View style={styles.accountPaymentCard}>
-                <View>
-                  <Text style={styles.accountInfoLabel}>Visa Infinite</Text>
-                  <Text style={styles.accountInfoDetail}>•••• 6411</Text>
-                </View>
-                <Text style={styles.accountPaymentBrand}>VISA</Text>
-                <Text style={styles.accountPaymentRemove}>×</Text>
-              </View>
-              <TouchableOpacity activeOpacity={0.75} style={styles.accountDashedButton}>
-                <Text style={styles.accountDashedButtonText}>＋  Ajouter un moyen de paiement</Text>
-              </TouchableOpacity>
-            </AccountSectionBlock>
-
-            <AccountSectionBlock title="CONFIDENTIALITÉ" open={openSections.privacy} onToggle={() => toggleSection('privacy')}>
-              {accountPrivacyItems.map((item) => (
-                <View key={item.label} style={styles.accountPrivacyCard}>
-                  {item.warning ? <View style={styles.accountWarningDot} /> : null}
-                  <View style={styles.accountInfoCopy}>
-                    <Text style={styles.accountInfoLabel}>{item.label}</Text>
-                    <Text style={styles.accountInfoDetail}>{item.detail}</Text>
-                  </View>
-                  <View style={[styles.accountSwitch, item.enabled && styles.accountSwitchOn]}>
-                    <View style={[styles.accountSwitchKnob, item.enabled && styles.accountSwitchKnobOn]} />
-                  </View>
-                </View>
-              ))}
-            </AccountSectionBlock>
-
-            <AccountSectionBlock title="CONVIVES DU SÉJOUR" open={openSections.guests} onToggle={() => toggleSection('guests')}>
-              {accountGuests.map((guest) => (
-                <View key={guest.name} style={[styles.accountGuestCard, guest.owner && styles.accountGuestCardOwner]}>
-                  <View style={[styles.accountGuestInitial, guest.owner && styles.accountGuestInitialOwner]}>
-                    <Text style={styles.accountGuestInitialText}>{guest.initial}</Text>
-                  </View>
-                  <View style={styles.accountGuestCopy}>
-                    <Text style={styles.accountGuestName}>{guest.name}</Text>
-                    <Text style={[styles.accountGuestRole, guest.owner && styles.accountGuestRoleOwner]}>{guest.role}</Text>
-                  </View>
-                  {guest.status ? (
-                    <Text style={[styles.accountGuestStatus, guest.status === 'en ligne' ? styles.accountGuestOnline : styles.accountGuestOffline]}>
-                      • {guest.status}
-                    </Text>
-                  ) : null}
-                </View>
-              ))}
-              <TouchableOpacity activeOpacity={0.75} style={styles.accountDashedButton}>
-                <Text style={styles.accountDashedButtonText}>＋  Inviter un convive</Text>
-              </TouchableOpacity>
-              <Text style={styles.accountGuestFootnote}>Accès offerts à vos convives</Text>
-            </AccountSectionBlock>
-          </ScrollView>
+        <View style={styles.inviteGuestNote}>
+          <Text style={styles.inviteGuestNoteText}>
+            Vos convives auront accès au programme partagé, au chat de groupe et à la cagnotte commune. SOLÝ, vos paiements et le chauffeur restent sous votre seule autorité.
+          </Text>
         </View>
       </View>
-    </Modal>
+    </View>
   );
 }
 
@@ -1265,20 +1699,13 @@ function HomeStayActions({
 
   return (
     <View style={[styles.homeStayActions, disabled && styles.homeStayActionsLocked]}>
-      <View style={styles.homeStayDivider}>
-        <View style={[styles.homeStayLine, { backgroundColor: scene.borderSoft }]} />
-        <Text style={[styles.homeStayDiamond, { color: scene.accentPrimary }]}>◆</Text>
-        <View style={[styles.homeStayLine, { backgroundColor: scene.borderSoft }]} />
-      </View>
-      <Text style={[styles.homeStayTitle, { color: scene.textPrimary }]}>Votre séjour est orchestré.</Text>
-
       <TouchableOpacity
         activeOpacity={disabled ? 1 : 0.78}
         disabled={disabled}
         onPress={onArrival}
         style={[styles.homeActionCard, { backgroundColor: scene.surfaceRaised, borderColor: scene.borderSoft }]}
       >
-        <View style={[styles.homeActionIcon, { borderColor: scene.borderSoft, backgroundColor: 'rgba(230,201,130,0.08)' }]}>
+        <View style={[styles.homeActionIcon, { borderColor: scene.borderSoft, backgroundColor: 'rgba(207,160,85,0.08)' }]}>
           <Text style={[styles.homeActionIconText, { color: scene.accentPrimary }]}>✈</Text>
         </View>
         <View style={styles.homeActionCopy}>
@@ -1294,8 +1721,8 @@ function HomeStayActions({
         onPress={onFormalities}
         style={[styles.homeActionCard, { backgroundColor: scene.surfaceRaised, borderColor: scene.borderSoft }]}
       >
-        <View style={[styles.homeActionIcon, { borderColor: scene.borderSoft, backgroundColor: 'rgba(230,201,130,0.08)' }]}>
-          <Text style={[styles.homeActionIconText, { color: scene.accentPrimary }]}>△</Text>
+        <View style={[styles.homeActionIcon, { borderColor: scene.borderSoft, backgroundColor: 'rgba(207,160,85,0.08)' }]}>
+          <Text style={[styles.homeActionIconText, { color: scene.accentPrimary }]}>⚠</Text>
         </View>
         <View style={styles.homeActionCopy}>
           <Text style={[styles.homeActionTitle, { color: scene.textPrimary }]}>Formalités d'arrivée à compléter</Text>
@@ -1468,6 +1895,102 @@ function ArrivalModeSheet({
   );
 }
 
+function FormalitiesSheet({
+  visible,
+  onClose,
+  notify,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  notify: (message: string, pattern?: number | number[]) => void;
+}) {
+  const dossiers = [
+    { name: 'Thibaut', status: 'COMPLET', passport: 'Passeport vérifié', visa: 'Visa non requis', complete: true },
+    { name: 'Yasmine F.', status: 'INCOMPLET', passport: 'Passeport à ajouter', visa: 'Visa non requis', complete: false },
+    { name: 'Nicolas B.', status: 'À VÉRIFIER', passport: 'Passeport reçu', visa: 'Visa à vérifier', complete: false },
+  ];
+
+  return (
+    <Modal
+      animationType="slide"
+      navigationBarTranslucent={false}
+      statusBarTranslucent={false}
+      transparent
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.formalitiesModalRoot}>
+        <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.arrivalBackdrop} />
+        <View style={styles.formalitiesSheet}>
+          <View style={styles.solyModernHandle} />
+          <View style={styles.formalitiesHeader}>
+            <Text style={styles.formalitiesTitle}>Formalités</Text>
+            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
+              <MaterialIcons name="close" size={23} color="#A6B0A5" />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.atmosphereRule} />
+
+          <Text style={styles.formalitiesIntro}>
+            Complétez les documents d’arrivée pour garantir un accueil fluide dès votre arrivée à Marrakech.
+          </Text>
+
+          <View style={styles.formalitiesAlert}>
+            <View style={styles.formalitiesAlertIcon}>
+              <MaterialIcons name="warning-amber" size={22} color="#CFA055" />
+            </View>
+            <View style={styles.formalitiesAlertCopy}>
+              <Text style={styles.formalitiesAlertTitle}>2 dossiers sur 3 incomplets</Text>
+              <Text style={styles.formalitiesAlertText}>Échéance dans 3 jours</Text>
+            </View>
+          </View>
+
+          <ScrollView
+            style={styles.formalitiesScroll}
+            contentContainerStyle={styles.formalitiesList}
+            showsVerticalScrollIndicator={false}
+          >
+            {dossiers.map((dossier) => (
+              <View key={dossier.name} style={styles.formalitiesCard}>
+                <View style={styles.formalitiesCardTop}>
+                  <Text style={styles.formalitiesName}>{dossier.name}</Text>
+                  <View style={[styles.formalitiesStatus, dossier.complete && styles.formalitiesStatusComplete]}>
+                    <Text style={[styles.formalitiesStatusText, dossier.complete && styles.formalitiesStatusTextComplete]}>
+                      {dossier.status}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.formalitiesDetailRow}>
+                  <MaterialIcons
+                    name={dossier.complete ? 'check-circle-outline' : 'error-outline'}
+                    size={18}
+                    color={dossier.complete ? '#54D786' : '#CFA055'}
+                  />
+                  <Text style={styles.formalitiesDetail}>{dossier.passport}</Text>
+                </View>
+                <View style={styles.formalitiesDetailRow}>
+                  <MaterialIcons name="description" size={18} color="#CFA055" />
+                  <Text style={styles.formalitiesDetail}>{dossier.visa}</Text>
+                </View>
+                {!dossier.complete ? (
+                  <TouchableOpacity
+                    activeOpacity={0.78}
+                    onPress={() => notify(`Dossier ${dossier.name} ouvert`, 8)}
+                    style={styles.formalitiesUpdate}
+                  >
+                    <Text style={styles.formalitiesUpdateText}>METTRE À JOUR</Text>
+                    <MaterialIcons name="arrow-forward" size={18} color="#082718" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function ArrivalOption({
   active,
   icon,
@@ -1505,96 +2028,109 @@ function ArrivalOption({
 function StayScreen({
   onSelect,
   onOpenDriverChat,
+  onClose,
 }: {
   onSelect: (item: (typeof agendaDays)[number]['items'][number]) => void;
   onOpenDriverChat: () => void;
+  onClose: () => void;
 }) {
-  const scene = scenes.immersive;
   const [open, setOpen] = useState(0);
-  const [driverLocated, setDriverLocated] = useState(false);
+  const [locatorOpen, setLocatorOpen] = useState(false);
+  const visibleDays = agendaDays.slice(0, 2);
 
   return (
-    <View style={[styles.screen, styles.stayScreen]}>
-      <View style={styles.stayLegacyTitleHidden}>
-      <SectionTitle title="Mon Séjour" subtitle="Programme jour par jour, prestations et contacts utiles." scene={scene} />
-      </View>
-      <View style={styles.stayHeader}>
-        <View style={[styles.stayHeaderIcon, { borderColor: scene.border }]}>
-          <Text style={[styles.stayHeaderIconText, { color: scene.accentPrimary }]}>⌘</Text>
-        </View>
-        <View style={styles.stayHeaderCopy}>
-          <Text style={[styles.stayTitle, { color: scene.accentPrimary }]}>Mon séjour</Text>
-          <Text style={[styles.staySubtitle, { color: scene.textSecondary }]}>LE FIL DE VOS JOURS</Text>
-        </View>
+    <View style={[styles.stayLayerScreen, locatorOpen && styles.stayLayerScreenExpanded]}>
+      <View style={styles.stayLayerTop}>
+        <Image source={solyResting} resizeMode="contain" style={styles.stayMascotPeek} />
       </View>
 
-      <SurfaceCard scene={scene} style={styles.driverArrivalCard}>
-        <View style={styles.driverArrivalBadge}>
-          <View style={styles.driverArrivalBadgeDot} />
-          <Text style={styles.driverArrivalBadgeText}>DANS 45 MIN</Text>
-        </View>
-        <Text style={[styles.driverArrivalName, { color: scene.accentPrimary }]}>Youssef</Text>
-        <Text style={[styles.driverArrivalTime, { color: scene.textPrimary }]}>arrive dans{'\n'}45 min</Text>
-        <Text style={[styles.driverArrivalRoute, { color: scene.textSecondary }]}>Aéroport Menara · Porte B → Riad Yasmine · médina</Text>
-        <Text style={[styles.driverArrivalCar, { color: scene.textMuted }]}>MERCEDES CLASSE V · 184 - A - 32</Text>
-
-        <View style={styles.driverArrivalActions}>
-          <TouchableOpacity
-            activeOpacity={0.78}
-            onPress={() => {
-              Vibration.vibrate(8);
-              setDriverLocated(true);
-            }}
-            style={[styles.driverArrivalButton, driverLocated && styles.driverArrivalButtonActive]}
-          >
-            <Text style={[styles.driverArrivalButtonText, { color: driverLocated ? scene.textPrimary : scene.accentPrimary }]}>
-              {driverLocated ? '✓ Localisé' : '⌖ Localiser'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity activeOpacity={0.78} onPress={onOpenDriverChat} style={styles.driverArrivalButton}>
-            <Text style={[styles.driverArrivalButtonText, { color: scene.accentPrimary }]}>▱ Contacter</Text>
+      <View style={[styles.stayLayerSheet, locatorOpen && styles.stayLayerSheetExpanded]}>
+        <View style={[styles.atmosphereHandle, styles.stayLayerHandle]} />
+        <View style={styles.atmosphereTitleRow}>
+          <Text style={styles.atmosphereTitle}>Mon séjour</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.atmosphereClose}>
+            <MaterialIcons name="close" size={23} color="#A6B0A5" />
           </TouchableOpacity>
         </View>
+        <View style={styles.atmosphereRule} />
 
-        {driverLocated ? <StayRoutePreview /> : null}
-      </SurfaceCard>
+        <View style={styles.stayDriverCard}>
+          <View style={styles.driverArrivalBadge}>
+            <View style={styles.driverArrivalBadgeDot} />
+            <Text style={styles.driverArrivalBadgeText}>DANS 45 MIN</Text>
+          </View>
+          <Text style={styles.stayDriverHeadline}>
+            <Text style={styles.stayDriverName}>Youssef</Text> arrive dans 45 min
+          </Text>
+          <Text style={styles.stayDriverRoute}>Aéroport Menara · Porte B → Riad Yasmine · médina</Text>
+          <Text style={styles.stayDriverCar}>MERCEDES CLASSE V  ·  184  -  A  -  32</Text>
 
-      <Text style={[styles.stayWelcome, { color: scene.textSecondary }]}>NOUS SOMMES HEUREUX DE VOUS ACCUEILLIR{'\n'}DU 15 AU 17 MAI</Text>
+          <View style={styles.driverArrivalActions}>
+            <TouchableOpacity
+              activeOpacity={0.78}
+              onPress={() => {
+                Vibration.vibrate(8);
+                setLocatorOpen((current) => !current);
+              }}
+              style={[styles.stayDriverButton, locatorOpen && styles.stayDriverButtonLocated]}
+            >
+              <MaterialIcons name={locatorOpen ? 'check' : 'location-on'} size={18} color={locatorOpen ? '#54D786' : '#CFA055'} />
+              <Text style={[styles.stayDriverButtonText, locatorOpen && styles.stayDriverButtonTextLocated]}>LOCALISER</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.78} onPress={onOpenDriverChat} style={styles.stayDriverButton}>
+              <MaterialIcons name="mail-outline" size={18} color="#CFA055" />
+              <Text style={styles.stayDriverButtonText}>CONTACTER</Text>
+            </TouchableOpacity>
+          </View>
+          <StayLocatorMap visible={locatorOpen} onClose={() => setLocatorOpen(false)} />
+        </View>
 
-      {agendaDays.map((day, index) => (
-        <SurfaceCard key={day.day} scene={scene} style={styles.accordionCard}>
+        <Text style={styles.stayLayerWelcome}>Nous sommes heureux de vous accueillir du 15 au 17 mai</Text>
+
+        {visibleDays.map((day, index) => (
+          <View key={day.day} style={styles.stayDayCard}>
           <TouchableOpacity
             activeOpacity={0.75}
             onPress={() => {
               Vibration.vibrate(6);
-              setOpen(index);
+              setOpen(open === index ? -1 : index);
             }}
-            style={styles.accordionHead}
+            style={styles.stayDayHead}
           >
-            <View>
-              <Text style={[styles.dayTitle, { color: scene.textPrimary }]}>{day.day}</Text>
-              <Text style={[styles.cardText, { color: scene.textMuted }]}>{day.date} · {day.note}</Text>
+            <View style={styles.stayDayCopy}>
+              <Text style={styles.stayDayTitle}>{index === 0 ? 'Vendredi 15 mai' : 'Samedi 16 mai'}</Text>
+              <Text numberOfLines={1} style={styles.stayDaySubtitle}>{index === 0 ? "Aujourd’hui · Vos premiers instants à Marrakech" : 'Médina & culture'}</Text>
             </View>
-            <View style={[styles.dayBadge, { borderColor: scene.border }]}>
-              <Text style={[styles.dayBadgeText, { color: scene.accentPrimary }]}>{day.countdown}</Text>
+            <View style={styles.stayDayBadge}>
+              <Text style={styles.stayDayBadgeText}>{index === 0 ? '6' : '3'}</Text>
             </View>
+            <MaterialIcons name={open === index ? 'arrow-drop-up' : 'arrow-drop-down'} size={20} color="#CFA055" />
           </TouchableOpacity>
           {open === index ? (
-            <View style={styles.timeline}>
-              {day.items.map((item) => (
-                <TouchableOpacity key={`${item.time}-${item.title}`} activeOpacity={0.76} onPress={() => onSelect(item)} style={styles.timelineRow}>
-                  <Text style={[styles.time, { color: scene.accentPrimary }]}>{item.time}</Text>
-                  <View style={styles.timelineCopy}>
-                    <Text style={[styles.itemTitle, { color: scene.textPrimary }]}>{item.title}</Text>
-                    <Text style={[styles.cardText, { color: scene.textMuted }]}>{item.place} · {item.provider}</Text>
+            <View style={styles.stayEventList}>
+              {day.items.slice(0, 2).map((item, itemIndex) => (
+                <TouchableOpacity key={`${item.time}-${item.title}`} activeOpacity={0.76} onPress={() => onSelect(item)} style={styles.stayEventCard}>
+                  <View style={styles.stayEventCopy}>
+                    <Text style={styles.stayEventTitle}>{itemIndex === 0 && index === 0 ? 'Arrivée à Marrakech' : item.title}</Text>
+                    <Text style={styles.stayEventPlace}>{item.place}</Text>
+                    {itemIndex === 0 && index === 0 ? (
+                      <>
+                        <Text style={styles.stayEventDetail}>Vol AT1196</Text>
+                        <Text style={styles.stayEventAccent}>CHAUFFEUR · YOUSSEF</Text>
+                        <Text style={styles.stayEventAccent}>MATRICULE · 184 - A - 32</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.stayEventDetail}>{item.provider}</Text>
+                    )}
                   </View>
-                  <Text style={[styles.status, { color: scene.textMuted }]}>{item.status}</Text>
+                  <Text style={styles.stayEventTime}>{itemIndex === 0 ? '06:00 – 07:00' : '07:30 – 08:30'}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           ) : null}
-        </SurfaceCard>
-      ))}
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -1642,20 +2178,19 @@ function StaticRouteMap() {
 }
 
 function DriverContactModal({ onClose }: { onClose: () => void }) {
-  const scene = scenes.immersive;
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([
     {
       id: 'driver-1',
       from: 'them',
-      text: 'Bonjour Slim, je suis votre chauffeur SOLY. Je vous attends a la sortie des arrivees.',
-      time: '14:08',
+      text: 'Bonjour Thibaut, je suis votre chauffeur SOLÝ. Je vous attends à la sortie des arrivées.',
+      time: 'Aujourd’hui · 19h42',
     },
     {
       id: 'driver-2',
-      from: 'them',
-      text: 'Mercedes Classe V noire - plaque 12345-A. Je porte un panneau SOLY.',
-      time: '14:08',
+      from: 'me',
+      text: 'D’accord',
+      time: 'Aujourd’hui · 19h42',
     },
   ]);
 
@@ -1672,80 +2207,74 @@ function DriverContactModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-      <View style={styles.driverChatRoot}>
-        <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.driverChatBackdrop} />
-        <View style={[styles.driverChatPanel, { backgroundColor: scene.bg, borderColor: scene.border }]}>
-          <View style={styles.driverChatHeader}>
-            <View style={styles.driverChatAvatar}>
-              <Text style={styles.driverChatAvatarText}>Y</Text>
-            </View>
-            <View style={styles.driverChatHeaderCopy}>
-              <Text style={[styles.driverChatName, { color: scene.accentPrimary }]}>Youssef</Text>
-              <Text style={[styles.driverChatRole, { color: scene.textSecondary }]}>SOLÝ Transferts · en route vers vous</Text>
-            </View>
-            <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.driverChatClose}>
-              <Text style={styles.driverChatCloseText}>×</Text>
-            </TouchableOpacity>
-          </View>
+    <View style={styles.contactChatRoot}>
+      <View style={styles.contactChatPanel}>
+        <View style={styles.contactChatHandle} />
+        <View style={styles.contactChatTitleRow}>
+          <Text style={styles.contactChatTitle}>Chat</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.contactChatClose}>
+            <MaterialIcons name="close" size={23} color="#A6B0A5" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.contactChatRule} />
 
-          <View style={styles.driverChatCarBar}>
-            <Text style={styles.driverChatCarText}>MERCEDES CLASSE V · 12345 - A · ARRIVÉE DANS 8 MIN</Text>
+        <View style={styles.contactChatProfile}>
+          <View style={styles.contactChatAvatar}>
+            <Text style={styles.contactChatAvatarText}>Y</Text>
+            <View style={styles.contactChatOnlineDot} />
           </View>
-
-          <View style={styles.driverChatBody}>
-            <Text style={styles.driverChatNotice}>Position de Youssef partagee en direct - arrivee estimee dans 8 min.</Text>
-            <ScrollView contentContainerStyle={styles.driverMessageList} showsVerticalScrollIndicator={false}>
-              {messages.map((message) => {
-                const mine = message.from === 'me';
-
-                return (
-                  <View key={message.id} style={styles.driverMessageRow}>
-                    <View style={[styles.driverMessageAvatar, mine && styles.driverMessageAvatarMine]}>
-                      <Text style={[styles.driverMessageAvatarText, mine && styles.driverMessageAvatarTextMine]}>{mine ? 'VO' : 'Y'}</Text>
-                    </View>
-                    <View style={[styles.driverMessageBubble, mine && styles.driverMessageBubbleMine]}>
-                      <View style={styles.driverMessageMetaRow}>
-                        <Text style={[styles.driverMessageSender, mine && styles.driverMessageSenderMine]}>{mine ? 'Vous' : 'Youssef'}</Text>
-                        <Text style={styles.driverMessageTime}>{message.time}</Text>
-                      </View>
-                      <Text style={styles.driverMessageText}>{message.text}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
-            <View style={styles.driverLegacyHidden}>
-              <Text style={styles.driverMessageText}>Bonjour Slim, je suis votre chauffeur SOLÝ. Je vous attends à la sortie des arrivées.</Text>
-              <Text style={styles.driverMessageTime}>14:08</Text>
-            </View>
-            <View style={styles.driverLegacyHidden}>
-              <Text style={styles.driverMessageText}>Mercedes Classe V noire · plaque 12345-A. Je porte un panneau SOLÝ.</Text>
-              <Text style={styles.driverMessageTime}>14:08</Text>
-            </View>
-          </View>
-
-          <View style={styles.driverQuickReplies}>
-            {['Je suis en retard', 'Changer le lieu', "J'arrive"].map((reply) => (
-              <TouchableOpacity key={reply} activeOpacity={0.78} onPress={() => sendDriverMessage(reply)} style={styles.driverQuickReply}>
-                <Text style={styles.driverQuickReplyText}>{reply}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <View style={styles.driverChatInputRow}>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              onSubmitEditing={() => sendDriverMessage()}
-              placeholder="Ecrire un message..."
-              placeholderTextColor="rgba(244,239,228,0.45)"
-              style={styles.driverChatInput}
-            />
-            <TouchableOpacity activeOpacity={0.78} onPress={() => sendDriverMessage()} style={styles.driverChatSend}>
-              <MaterialIcons name="send" size={19} color="#0D2F21" />
-            </TouchableOpacity>
+          <View>
+            <Text style={styles.contactChatName}>Youssef B.</Text>
+            <Text style={styles.contactChatConnected}>Connecté</Text>
           </View>
         </View>
+
+        <View style={styles.contactChatCarBar}>
+          <Text style={styles.contactChatCar}>MERCEDES CLASSE V · 12345 - A</Text>
+          <Text style={styles.contactChatEta}>ARRIVÉE DANS 8 MIN</Text>
+        </View>
+
+        <Text style={styles.contactChatNotice}>
+          Position de Youssef partagée en direct — arrivée estimée dans 8 min.
+        </Text>
+
+        <ScrollView contentContainerStyle={styles.contactChatMessages} showsVerticalScrollIndicator={false}>
+          {messages.map((message) => {
+            const mine = message.from === 'me';
+            return (
+              <View key={message.id} style={[styles.contactChatMessageRow, mine ? styles.contactChatMessageRowMine : styles.contactChatMessageRowDriver]}>
+                <View style={[styles.contactChatBubble, mine ? styles.contactChatBubbleMine : styles.contactChatBubbleDriver]}>
+                  <Text style={styles.contactChatMessageText}>{message.text}</Text>
+                  <Text style={styles.contactChatMessageTime}>{message.time}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.contactChatQuickReplies}>
+          {['Je suis en retard', 'Changer le lieu', "J’arrive"].map((reply) => (
+            <TouchableOpacity key={reply} activeOpacity={0.78} onPress={() => sendDriverMessage(reply)} style={styles.contactChatQuickReply}>
+              <Text style={styles.contactChatQuickReplyText}>{reply}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.contactChatComposer}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={() => sendDriverMessage()}
+            placeholder="Écrire un message..."
+            placeholderTextColor="#879A8D"
+            style={styles.contactChatInput}
+          />
+          <TouchableOpacity activeOpacity={0.78} onPress={() => sendDriverMessage()} style={styles.contactChatSend}>
+            <MaterialIcons name="chevron-right" size={23} color="#092416" />
+          </TouchableOpacity>
+        </View>
       </View>
+    </View>
   );
 }
 
@@ -1800,7 +2329,7 @@ function MessageCenterOverlay({
                 key={chat}
                 activeOpacity={0.78}
                 onPress={() => setActiveChat(chat)}
-                style={[styles.messageOverlayTab, { borderColor: active ? scene.accentPrimary : scene.border, backgroundColor: active ? 'rgba(230,201,130,0.10)' : 'transparent' }]}
+                style={[styles.messageOverlayTab, { borderColor: active ? scene.accentPrimary : scene.border, backgroundColor: active ? 'rgba(207,160,85,0.10)' : 'transparent' }]}
               >
                 <Text style={[styles.messageOverlayTabText, { color: active ? scene.accentPrimary : scene.textSecondary }]}>{chat}</Text>
                 {unread ? (
@@ -1827,7 +2356,7 @@ function MessageCenterOverlay({
                   soly && styles.messageBubbleSoly,
                   {
                     borderColor: mine ? scene.accentPrimary : scene.borderSoft,
-                    backgroundColor: mine ? 'rgba(230,201,130,0.12)' : scene.surfaceRaised,
+                    backgroundColor: mine ? 'rgba(207,160,85,0.12)' : scene.surfaceRaised,
                   },
                 ]}
               >
@@ -1894,7 +2423,7 @@ function ButlerScreen({ notify }: { notify: (message: string, pattern?: number |
             key={intent}
             activeOpacity={0.76}
             onPress={() => setRequest(intent)}
-            style={[styles.intentChip, { borderColor: scene.border, backgroundColor: request.includes(intent) ? 'rgba(230,201,130,0.14)' : 'transparent' }]}
+            style={[styles.intentChip, { borderColor: scene.border, backgroundColor: request.includes(intent) ? 'rgba(207,160,85,0.14)' : 'transparent' }]}
           >
             <Text style={[styles.intentText, { color: scene.textPrimary }]}>{intent}</Text>
           </TouchableOpacity>
@@ -1922,60 +2451,108 @@ function ButlerScreen({ notify }: { notify: (message: string, pattern?: number |
   );
 }
 
-function WeatherScreen({ weather }: { weather: LiveWeatherState }) {
-  const scene = scenes.immersive;
-  const [active, setActive] = useState(0);
+function WeatherScreen({ weather, onClose }: { weather: LiveWeatherState; onClose: () => void }) {
   const days = weather.days.length ? weather.days : weatherDays;
-  const day = days[Math.min(active, days.length - 1)];
+  const day = days[0];
   const dayIcon = weatherIconForDay(day);
-  const status =
-    weather.status === 'ready'
-      ? `Live · ${weather.currentLabel}`
-      : weather.status === 'denied'
-        ? 'Autorisation localisation refusée · météo Marrakech'
-        : weather.status === 'error'
-          ? 'Météo live indisponible · données de secours'
-          : 'Localisation et météo live en cours...';
+  const [minTemp = '—', maxTemp = '—'] = day.range.split('/').map((value) => value.trim());
 
   return (
-    <View style={styles.screen}>
-      <SectionTitle title="Atmosphère" subtitle={status} scene={scene} />
-      <SurfaceCard scene={scene} style={styles.weatherHero}>
-        <View style={styles.weatherHeroTop}>
-          <View>
-            <SolyEyebrow scene={scene}>{day.label}</SolyEyebrow>
-            <Text style={[styles.temp, { color: scene.textPrimary }]}>{day.temp}</Text>
-          </View>
-          <View style={[styles.weatherIconOrb, { borderColor: scene.border, backgroundColor: scene.surfaceRaised }]}>
-            <Text style={styles.weatherIconGlyph}>{dayIcon}</Text>
-          </View>
-        </View>
-        <Text style={[styles.weatherCondition, { color: scene.accentPrimary }]}>{day.condition}</Text>
-        <View style={styles.statsRow}>
-          <SolyDetailCard label="Max / min" value={day.range} scene={scene} />
-          <SolyDetailCard label="Vent" value={day.wind} scene={scene} />
-          <SolyDetailCard label="Coucher" value={day.sunset} scene={scene} />
-        </View>
-        <Text style={[styles.editorialNote, { color: scene.textMuted }]}>{day.note}</Text>
-      </SurfaceCard>
-      <View style={styles.weatherStrip}>
-        {days.map((item, index) => (
-          <TouchableOpacity
-            key={item.label}
-            activeOpacity={0.76}
-            onPress={() => setActive(index)}
-            style={[styles.weatherMini, { borderColor: active === index ? scene.accentPrimary : scene.border }]}
-          >
-            <View style={styles.weatherMiniHeader}>
-              <Text style={[styles.weatherMiniLabel, { color: scene.textMuted }]}>{item.label}</Text>
-              <Text style={styles.weatherMiniIcon}>{weatherIconForDay(item)}</Text>
+    <View style={styles.atmosphereScreen}>
+      <View style={styles.atmosphereTop}>
+        <View style={styles.atmosphereAccountRow}>
+          <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(177,148,48,0.35)' }]}>
+            <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
+              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
             </View>
-            <Text style={[styles.weatherMiniTemp, { color: scene.textPrimary }]}>{item.temp}</Text>
+            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+            <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
+          </View>
+        </View>
+        <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+        <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {days[0]?.temp ?? '—'}</Text>
+        <Image source={solyResting} resizeMode="contain" style={styles.atmosphereMascotPeek} />
+      </View>
+
+      <View style={styles.atmosphereSheet}>
+        <View style={styles.atmosphereHandle} />
+        <View style={styles.atmosphereTitleRow}>
+          <Text style={styles.atmosphereTitle}>Atmosphère</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.atmosphereClose}>
+            <MaterialIcons name="close" size={23} color="#A6B0A5" />
           </TouchableOpacity>
-        ))}
+        </View>
+        <View style={styles.atmosphereRule} />
+        <Text style={styles.atmosphereIntro}>
+          {currentWeatherSummary(day, weather.city)}
+        </Text>
+
+        <View style={styles.atmosphereHero}>
+          <View style={styles.atmosphereDateRow}>
+            <Text style={styles.atmosphereDate}>{day.label}</Text>
+            <Text style={styles.atmosphereToday}>AUJOURD’HUI</Text>
+          </View>
+          <View style={styles.atmosphereTempRow}>
+            <Text style={styles.atmosphereWeatherIcon}>{dayIcon}</Text>
+            <Text style={styles.atmosphereTemp}>{day.temp}</Text>
+          </View>
+          <Text style={styles.atmosphereCondition}>{day.condition}</Text>
+          <View style={styles.atmosphereStats}>
+            <WeatherStat label="Max" value={maxTemp} />
+            <WeatherStat label="Min" value={minTemp} />
+            <WeatherStat label="Vent" value={day.wind} />
+            <WeatherStat label="Coucher" value={day.sunset} />
+          </View>
+          <View style={styles.atmosphereNote}>
+            <Text style={styles.atmosphereNoteText}>{day.note}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.atmosphereOtherLabel}>LES AUTRES JOURS DU SÉJOUR</Text>
+        <View style={styles.atmosphereRule} />
+        <View style={styles.atmosphereForecastRow}>
+          {days.slice(1, 4).map((item) => (
+            <View key={item.label} style={styles.atmosphereMini}>
+              <Text numberOfLines={1} style={styles.atmosphereMiniLabel}>{item.label}</Text>
+              <Text style={styles.atmosphereMiniIcon}>{weatherIconForDay(item)}</Text>
+              <Text style={styles.atmosphereMiniTemp}>{item.temp}</Text>
+            </View>
+          ))}
+        </View>
       </View>
     </View>
   );
+}
+
+function WeatherStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.atmosphereStat}>
+      <Text style={styles.atmosphereStatLabel}>{label}</Text>
+      <Text style={styles.atmosphereStatValue}>{value}</Text>
+    </View>
+  );
+}
+
+function currentWeatherSummary(day: LiveWeatherDay, city: string) {
+  const condition = day.condition.toLowerCase();
+
+  if (condition.includes('clair')) {
+    return `À ${city}, le ciel est dégagé avec ${day.temp}. Vent léger à ${day.wind} : une belle journée pour profiter de l’extérieur.`;
+  }
+  if (condition.includes('nuage')) {
+    return `À ${city}, le ciel est nuageux avec ${day.temp}. Le vent souffle à ${day.wind} : une lumière douce accompagne votre journée.`;
+  }
+  if (condition.includes('pluie') || condition.includes('bruine')) {
+    return `Quelques précipitations sont prévues à ${city}, avec ${day.temp} et un vent à ${day.wind}. Privilégiez les déplacements couverts.`;
+  }
+  if (condition.includes('orage')) {
+    return `Risque d’orage à ${city}, avec ${day.temp} et un vent à ${day.wind}. SOLÝ recommande d’adapter les sorties.`;
+  }
+  if (condition.includes('brume')) {
+    return `Une légère brume couvre ${city}, avec ${day.temp} et un vent à ${day.wind}. La visibilité peut être réduite par moments.`;
+  }
+
+  return `À ${city}, il fait actuellement ${day.temp}. ${day.condition}, avec un vent à ${day.wind}.`;
 }
 
 function CompanionsScreen({
@@ -2000,7 +2577,7 @@ function CompanionsScreen({
             <Text style={[styles.itemTitle, { color: scene.textPrimary }]}>{person.name}</Text>
             <Text style={[styles.cardText, { color: scene.textMuted }]}>{person.permissions}</Text>
           </View>
-          <View style={[styles.liveDot, { backgroundColor: person.status === 'en ligne' ? '#79C58A' : '#D6B760' }]} />
+          <View style={[styles.liveDot, { backgroundColor: person.status === 'en ligne' ? '#79C58A' : '#CFA055' }]} />
         </TouchableOpacity>
       ))}
       <SurfaceCard scene={scene} style={styles.shareCard}>
@@ -2131,39 +2708,137 @@ function ExploreScreen({
   );
 }
 
-function CurrencyScreen({ exchangeRate }: { exchangeRate: ExchangeRateState }) {
-  const scene = scenes.transactional;
-  const rate = exchangeRate.rate;
-  const [eur, setEur] = useState('250');
-  const mad = useMemo(() => {
-    const value = Number(eur.replace(',', '.')) || 0;
-    return Math.round(value * rate).toLocaleString('fr-FR');
-  }, [eur]);
+function CurrencyScreen({
+  exchangeRate,
+  weather,
+  onClose,
+}: {
+  exchangeRate: ExchangeRateState;
+  weather: LiveWeatherState;
+  onClose: () => void;
+}) {
+  const currencies = [
+    { code: 'EUR', name: 'EURO' },
+    { code: 'USD', name: 'DOLLAR AMÉRICAIN' },
+    { code: 'JPY', name: 'YEN JAPONAIS' },
+    { code: 'GBP', name: 'LIVRE STERLING' },
+    { code: 'CAD', name: 'DOLLAR CANADIEN' },
+    { code: 'CNY', name: 'YUAN CHINOIS' },
+  ];
+  const [selectedCode, setSelectedCode] = useState('EUR');
+  const [amount, setAmount] = useState('100');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const selected = currencies.find((item) => item.code === selectedCode) ?? currencies[0];
+  const selectedBaseRate = exchangeRate.rates[selectedCode] || 1;
+  const madPerUnit = exchangeRate.rate / selectedBaseRate;
+  const numericAmount = Number(amount.replace(',', '.')) || 0;
+  const madValue = numericAmount * madPerUnit;
+  const quickConversions = [
+    { label: 'Pause café en terrasse', mad: 25 },
+    { label: 'Trajet en médina', mad: 60 },
+    { label: 'Dîner signature', mad: 650 },
+  ];
 
   return (
-    <View style={styles.screen}>
-      <SectionTitle
-        title="Devises"
-        subtitle={exchangeRate.status === 'ready' ? `Taux live · mis à jour ${exchangeRate.updatedAt}` : 'Taux live en cours de synchronisation.'}
-        scene={scene}
-      />
-      <SurfaceCard scene={scene} style={styles.converter}>
-        <Text style={[styles.currencyLabel, { color: scene.textMuted }]}>EUR</Text>
-        <TextInput
-          keyboardType="decimal-pad"
-          value={eur}
-          onChangeText={setEur}
-          style={[styles.currencyInput, { color: scene.textPrimary }]}
-        />
-        <View style={[styles.convertDivider, { borderColor: scene.border }]}>
-          <Text style={[styles.convertIcon, { color: scene.accentPrimary }]}>⇅</Text>
+    <View style={styles.currencyLayerScreen}>
+      <View style={styles.currencyLayerTop}>
+        <View style={styles.atmosphereAccountRow}>
+          <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(207,160,85,0.35)' }]}>
+            <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
+              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
+            </View>
+            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+            <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
+          </View>
         </View>
-        <Text style={[styles.currencyLabel, { color: scene.textMuted }]}>MAD</Text>
-        <Text style={[styles.currencyOutput, { color: scene.textPrimary }]}>{mad}</Text>
-      </SurfaceCard>
-      <Text style={[styles.rate, { color: scene.textMuted }]}>API dynamique · 1 EUR = {rate.toFixed(2)} MAD</Text>
+        <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+        <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '—'}</Text>
+        <Image source={solyResting} resizeMode="contain" style={styles.currencyMascotPeek} />
+      </View>
+
+      <View style={styles.currencyLayerSheet}>
+        <View style={styles.atmosphereHandle} />
+        <View style={styles.atmosphereTitleRow}>
+          <Text style={styles.atmosphereTitle}>Devises</Text>
+          <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.atmosphereClose}>
+            <MaterialIcons name="close" size={23} color="#A6B0A5" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.atmosphereRule} />
+
+        <View style={styles.currencyConverterCard}>
+          <View style={styles.currencyRow}>
+            <Text style={styles.currencyRowLabel}>MAD  ·  Dirham</Text>
+            <Text style={styles.currencyRowValue}>{formatCurrencyNumber(madValue, 'MAD')}</Text>
+          </View>
+          <View style={styles.currencySwap}>
+            <MaterialIcons name="swap-vert" size={27} color="#CFA055" />
+          </View>
+          <TouchableOpacity activeOpacity={0.78} onPress={() => setDropdownOpen((current) => !current)} style={styles.currencyRow}>
+            <View style={styles.currencyCodeWrap}>
+              <Text style={styles.currencyRowLabel}>{selected.code}  ·  {currencyDisplayName(selected.name)}</Text>
+              <MaterialIcons name={dropdownOpen ? 'arrow-drop-up' : 'arrow-drop-down'} size={19} color="#CFA055" />
+            </View>
+            <TextInput
+              keyboardType="decimal-pad"
+              value={amount}
+              onChangeText={setAmount}
+              onFocus={() => setDropdownOpen(false)}
+              style={styles.currencyAmountInput}
+            />
+          </TouchableOpacity>
+          <Text style={styles.currencyRateText}>
+            1 {selected.code} = {madPerUnit.toFixed(2).replace('.', ',')} MAD · mis à jour {exchangeRate.updatedAt}
+          </Text>
+
+          {dropdownOpen ? (
+            <View style={styles.currencyDropdown}>
+              {currencies.map((currency) => (
+                <TouchableOpacity
+                  key={currency.code}
+                  activeOpacity={0.76}
+                  onPress={() => {
+                    setSelectedCode(currency.code);
+                    setDropdownOpen(false);
+                  }}
+                  style={[styles.currencyDropdownItem, currency.code === selectedCode && styles.currencyDropdownItemActive]}
+                >
+                  <Text style={styles.currencyDropdownText}>{currency.code} · {currency.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.currencyQuickCard}>
+          <Text style={styles.currencyQuickTitle}>CONVERSIONS RAPIDES</Text>
+          {quickConversions.map((item) => (
+            <View key={item.label} style={styles.currencyQuickRow}>
+              <View style={styles.currencyQuickDot} />
+              <View style={styles.currencyQuickCopy}>
+                <Text style={styles.currencyQuickLabel}>{item.label}</Text>
+                <Text style={styles.currencyQuickMad}>≈ {item.mad} MAD</Text>
+              </View>
+              <Text style={styles.currencyQuickValue}>
+                {(item.mad / madPerUnit).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} {selected.code}
+              </Text>
+            </View>
+          ))}
+          <Text style={styles.currencyAttribution}>Rates by ExchangeRate-API</Text>
+        </View>
+      </View>
     </View>
   );
+}
+
+function currencyDisplayName(name: string) {
+  return name.charAt(0) + name.slice(1).toLowerCase();
+}
+
+function formatCurrencyNumber(value: number, currency: string) {
+  return value.toLocaleString('fr-FR', {
+    maximumFractionDigits: currency === 'MAD' ? 0 : 2,
+  });
 }
 
 function SosScreen({
@@ -2370,7 +3045,7 @@ function ChatScreen({ notify }: { notify: (message: string, pattern?: number | n
                     styles.messageAvatar,
                     {
                       borderColor: mine ? scene.accentPrimary : scene.borderSoft,
-                      backgroundColor: mine ? 'rgba(230,201,130,0.16)' : scene.surfaceRaised,
+                      backgroundColor: mine ? 'rgba(207,160,85,0.16)' : scene.surfaceRaised,
                     },
                   ]}
                 >
@@ -2383,7 +3058,7 @@ function ChatScreen({ notify }: { notify: (message: string, pattern?: number | n
                     soly && styles.messageBubbleSoly,
                     {
                       borderColor: mine ? scene.accentPrimary : scene.borderSoft,
-                      backgroundColor: mine ? 'rgba(230,201,130,0.10)' : scene.surfaceRaised,
+                      backgroundColor: mine ? 'rgba(207,160,85,0.10)' : scene.surfaceRaised,
                     },
                   ]}
                 >
@@ -2560,7 +3235,7 @@ function useExchangeRate() {
           ? new Date(data.time_last_update_utc).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
           : 'maintenant';
 
-        if (mounted) setExchangeRate({ status: 'ready', rate, updatedAt });
+        if (mounted) setExchangeRate({ status: 'ready', rate, rates: data.rates ?? fallbackExchangeRate.rates, updatedAt });
       } catch {
         if (mounted) setExchangeRate({ ...fallbackExchangeRate, status: 'error', updatedAt: 'hors ligne' });
       }
@@ -2608,7 +3283,7 @@ async function fetchWeatherForCoords(
     `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
     '&current=temperature_2m,weather_code,wind_speed_10m' +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunset' +
-    '&timezone=auto&forecast_days=3';
+    '&timezone=auto&forecast_days=4';
   const response = await fetch(url);
   if (!response.ok) throw new Error('Weather request failed');
 
@@ -2617,14 +3292,14 @@ async function fetchWeatherForCoords(
   const currentWind = Math.round(Number(data.current?.wind_speed_10m ?? 0));
   const currentCode = Number(data.current?.weather_code ?? data.daily?.weather_code?.[0] ?? 0);
   const dailyTimes: string[] = data.daily?.time ?? [];
-  const days: LiveWeatherDay[] = dailyTimes.slice(0, 3).map((date, index) => {
+  const days: LiveWeatherDay[] = dailyTimes.slice(0, 4).map((date, index) => {
     const max = Math.round(Number(data.daily.temperature_2m_max?.[index] ?? currentTemp));
     const min = Math.round(Number(data.daily.temperature_2m_min?.[index] ?? currentTemp));
     const code = Number(data.daily.weather_code?.[index] ?? currentCode);
     const sunset = formatSunset(data.daily.sunset?.[index]);
 
     return {
-      label: index === 0 ? "Aujourd'hui" : index === 1 ? 'Demain' : 'Après-demain',
+      label: formatWeatherDay(date),
       temp: index === 0 ? `${currentTemp}°` : `${max}°`,
       range: `${min}° / ${max}°`,
       wind: `${currentWind} km/h`,
@@ -2641,6 +3316,13 @@ async function fetchWeatherForCoords(
     currentLabel: `${city} · ${weatherCodeLabel(currentCode).toLowerCase()}`,
     days: days.length ? days : weatherDays,
   };
+}
+
+function formatWeatherDay(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  const formatted = date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' });
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1).replace('.', '');
 }
 
 function formatSunset(value?: string) {
@@ -2755,7 +3437,7 @@ function DockIconButton({
       style={[
         styles.bottomDockIconButton,
         active && { backgroundColor: scene.accentPrimary },
-        pulse && { borderColor: scene.accentPrimary, backgroundColor: 'rgba(230,201,130,0.08)' },
+        pulse && { borderColor: scene.accentPrimary, backgroundColor: 'rgba(207,160,85,0.08)' },
       ]}
     >
       <MaterialIcons name={icon} size={22} color={iconColor} />
@@ -2816,6 +3498,9 @@ const styles = StyleSheet.create({
   app: {
     flex: 1,
   },
+  mainScroll: {
+    flex: 1,
+  },
   loadingRoot: {
     flex: 1,
     alignItems: 'center',
@@ -2828,7 +3513,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(230,201,130,0.28)',
+    backgroundColor: 'rgba(207,160,85,0.28)',
   },
   loadingFineLine: {
     position: 'absolute',
@@ -2836,7 +3521,7 @@ const styles = StyleSheet.create({
     right: 42,
     top: '31%',
     height: 1,
-    backgroundColor: 'rgba(230,201,130,0.10)',
+    backgroundColor: 'rgba(207,160,85,0.10)',
   },
   loadingContent: {
     alignItems: 'center',
@@ -2847,7 +3532,7 @@ const styles = StyleSheet.create({
     height: 92,
     borderRadius: 46,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.36)',
+    borderColor: 'rgba(207,160,85,0.36)',
     backgroundColor: 'rgba(6,20,14,0.42)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2859,7 +3544,7 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: 'rgba(230,201,130,0.16)',
+    backgroundColor: 'rgba(207,160,85,0.16)',
   },
   loadingMascot: {
     width: 64,
@@ -2870,7 +3555,7 @@ const styles = StyleSheet.create({
     fontSize: 40,
     lineHeight: 46,
     letterSpacing: 6,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   loadingSubtitle: {
     marginTop: 2,
@@ -2892,11 +3577,11 @@ const styles = StyleSheet.create({
     width: 26,
     height: 3,
     borderRadius: 2,
-    backgroundColor: 'rgba(230,201,130,0.72)',
+    backgroundColor: 'rgba(207,160,85,0.72)',
   },
   loadingProgressSegmentActive: {
     width: 34,
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
   },
   loadingText: {
     marginTop: 9,
@@ -2911,7 +3596,7 @@ const styles = StyleSheet.create({
     fontFamily: type.bodyBold,
     fontSize: 8.8,
     letterSpacing: 2.2,
-    color: 'rgba(230,201,130,0.52)',
+    color: 'rgba(207,160,85,0.52)',
   },
   topChrome: {
     height: 46,
@@ -3043,9 +3728,15 @@ const styles = StyleSheet.create({
     paddingBottom: 92,
   },
   homeScrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'web' ? 24 : 72,
+    paddingHorizontal: 24,
+    paddingTop: 10,
+    paddingBottom: 28,
+  },
+  weatherScrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   screen: {
     gap: spacing.md,
@@ -3057,11 +3748,11 @@ const styles = StyleSheet.create({
   },
   homeTopBar: {
     width: '100%',
-    minHeight: 38,
+    minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
+    justifyContent: 'flex-end',
+    marginBottom: 7,
   },
   homeTime: {
     position: 'absolute',
@@ -3071,77 +3762,79 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   homeAccountPill: {
-    minHeight: 32,
-    borderRadius: 16,
+    minHeight: 36,
+    borderRadius: 19,
     borderWidth: 1,
     paddingLeft: 4,
-    paddingRight: 10,
+    paddingRight: 11,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
   },
   homeAccountInitial: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 27,
+    height: 27,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   homeAccountInitialText: {
-    fontFamily: type.serif,
-    fontSize: 13,
-    lineHeight: 16,
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    lineHeight: 12,
   },
   homeAccountName: {
-    fontFamily: type.bodyBold,
-    fontSize: 10,
-    letterSpacing: 1,
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
   homeAccountCaret: {
     fontFamily: type.bodyBold,
     fontSize: 10,
   },
   homeHeader: {
-    alignItems: 'center',
+    width: '100%',
+    alignItems: 'flex-start',
     gap: 2,
-    marginTop: 0,
+    marginTop: 2,
   },
   homeGreeting: {
     fontFamily: type.serif,
-    fontSize: 34,
-    lineHeight: 38,
+    fontSize: 27,
+    lineHeight: 32,
   },
   homeMeta: {
-    fontFamily: type.bodyBold,
-    fontSize: 12,
+    fontFamily: type.body,
+    fontSize: 12.5,
     letterSpacing: 0.2,
   },
   mascotButton: {
     width: '100%',
-    height: 174,
+    height: 122,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 12,
+    marginTop: 16,
   },
   mascotImage: {
-    width: 214,
-    height: 188,
+    width: 139,
+    height: 122,
   },
   homeBrand: {
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 7,
+    marginBottom: 22,
   },
   homeLogo: {
     fontFamily: type.display,
-    fontSize: 44,
-    lineHeight: 50,
-    letterSpacing: 8,
+    fontSize: 30,
+    lineHeight: 37,
+    letterSpacing: 2,
   },
   homeSubtitle: {
     fontFamily: type.bodyMedium,
-    fontSize: 13,
-    letterSpacing: 8,
+    fontSize: 8,
+    letterSpacing: 4.2,
   },
   homeDivider: {
     width: 118,
@@ -3170,23 +3863,211 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
   homeSosButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 1,
-    borderColor: 'rgba(185,90,58,0.48)',
-    backgroundColor: 'rgba(70,18,17,0.18)',
+    width: 58,
+    height: 30,
+    borderRadius: 16,
+    borderWidth: 0,
+    backgroundColor: '#E62D31',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    marginTop: 18,
-    marginBottom: 16,
+    marginTop: 26,
+    marginBottom: 4,
   },
   homeSosText: {
     fontFamily: type.bodyBold,
+    fontSize: 9.5,
+    letterSpacing: 2.5,
+    color: '#FFFFFF',
+  },
+  urgentSafeArea: {
+    flex: 1,
+    backgroundColor: '#041E0C',
+  },
+  urgentTop: {
+    height: 166,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  urgentMascotPeek: {
+    position: 'absolute',
+    width: 92,
+    height: 81,
+    bottom: -49,
+    left: '50%',
+    marginLeft: -46,
+  },
+  urgentSheet: {
+    flex: 1,
+    minHeight: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  urgentIntroCard: {
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 17,
+    paddingBottom: 16,
+    marginTop: 18,
+  },
+  urgentIntroText: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 17,
+    color: '#B7C1BA',
+  },
+  urgentPrimaryCall: {
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: '#B44339',
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 13,
+  },
+  urgentPrimaryTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    lineHeight: 15,
+    color: '#F6F0E8',
+  },
+  urgentPrimaryMeta: {
+    fontFamily: type.body,
+    fontSize: 7,
+    lineHeight: 10,
+    color: '#E7CDC8',
+  },
+  urgentNumbersCard: {
+    flex: 1,
+    minHeight: 0,
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 17,
+    paddingBottom: 13,
+    marginTop: 18,
+  },
+  urgentNumbersTitle: {
+    fontFamily: type.body,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#CFA055',
+    marginBottom: 11,
+  },
+  urgentNumberRow: {
+    flex: 1,
+    minHeight: 52,
+    maxHeight: 63,
+    borderRadius: 11,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  urgentNumberLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#F1EEE7',
+  },
+  urgentNumberDetail: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 11,
+    color: '#A8B5AC',
+  },
+  urgentNumberValue: {
+    fontFamily: type.body,
+    fontSize: 10,
+    color: '#F1EEE7',
+    textAlign: 'right',
+  },
+  urgentConfirmOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 120,
+    backgroundColor: 'rgba(4,30,12,0.82)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  urgentConfirmCard: {
+    width: '100%',
+    borderRadius: 6,
+    backgroundColor: '#125638',
+    paddingHorizontal: 17,
+    paddingTop: 18,
+    paddingBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.32,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 18,
+  },
+  urgentConfirmTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 16,
+    lineHeight: 21,
+    color: '#CFA055',
+    textAlign: 'center',
+  },
+  urgentConfirmDestination: {
+    fontFamily: type.bodyMedium,
+    fontSize: 14,
+    lineHeight: 19,
+    color: '#F4F0E7',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  urgentConfirmText: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 17,
+    color: '#B9C7BD',
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  urgentConfirmActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 17,
+  },
+  urgentCancelButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#DCE7DF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  urgentCancelText: {
+    fontFamily: type.bodyMedium,
     fontSize: 9,
-    letterSpacing: 3,
-    color: '#B95A3A',
+    letterSpacing: 1.5,
+    color: '#F3F0E9',
+  },
+  urgentCallButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 7,
+    backgroundColor: '#B44339',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  urgentCallText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    color: '#F8F2EA',
   },
   homeEmergencyPanel: {
     width: '100%',
@@ -3205,7 +4086,7 @@ const styles = StyleSheet.create({
     width: 43,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(230,201,130,0.24)',
+    backgroundColor: 'rgba(207,160,85,0.24)',
     marginBottom: 5,
   },
   homeEmergencyHeader: {
@@ -3235,7 +4116,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 25,
     lineHeight: 29,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   homeEmergencySubtitle: {
     fontFamily: type.bodyBold,
@@ -3249,7 +4130,7 @@ const styles = StyleSheet.create({
     height: 34,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.28)',
+    borderColor: 'rgba(207,160,85,0.28)',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.12)',
@@ -3292,8 +4173,8 @@ const styles = StyleSheet.create({
   homeEmergencyConfirm: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.36)',
-    backgroundColor: 'rgba(230,201,130,0.08)',
+    borderColor: 'rgba(207,160,85,0.36)',
+    backgroundColor: 'rgba(207,160,85,0.08)',
     padding: 12,
     gap: 12,
   },
@@ -3312,20 +4193,20 @@ const styles = StyleSheet.create({
     height: 38,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.28)',
+    borderColor: 'rgba(207,160,85,0.28)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   homeEmergencyCancelText: {
     fontFamily: type.bodyBold,
     fontSize: 12,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   homeEmergencyConfirmButton: {
     flex: 1,
     height: 38,
     borderRadius: 12,
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -3341,14 +4222,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     letterSpacing: 3,
-    color: '#C7A951',
+    color: '#CFA055',
     marginTop: 8,
   },
   homeEmergencyRow: {
     minHeight: 70,
     borderRadius: 13,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.20)',
+    borderColor: 'rgba(207,160,85,0.20)',
     backgroundColor: 'rgba(0,0,0,0.13)',
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -3360,7 +4241,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    shadowColor: '#E6C982',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.4,
     shadowRadius: 7,
     shadowOffset: { width: 0, height: 0 },
@@ -3392,8 +4273,8 @@ const styles = StyleSheet.create({
   },
   homeStayActions: {
     width: '100%',
-    marginBottom: 18,
-    gap: 14,
+    marginBottom: 0,
+    gap: 9,
   },
   homeStayActionsLocked: {
     opacity: 0.48,
@@ -3423,47 +4304,64 @@ const styles = StyleSheet.create({
   },
   homeActionCard: {
     width: '100%',
-    minHeight: 80,
-    borderRadius: 14,
+    minHeight: 63,
+    borderRadius: 11,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 13,
   },
   homeActionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
+    width: 33,
+    height: 33,
+    borderRadius: 9,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
   homeActionIconText: {
     fontFamily: type.display,
-    fontSize: 18,
-    lineHeight: 21,
+    fontSize: 17,
+    lineHeight: 20,
   },
   homeActionCopy: {
     flex: 1,
     gap: 4,
   },
   homeActionTitle: {
-    fontFamily: type.serif,
-    fontSize: 17,
-    lineHeight: 20,
+    fontFamily: type.bodyMedium,
+    fontSize: 12.5,
+    lineHeight: 17,
   },
   homeActionMeta: {
-    fontFamily: type.bodyBold,
-    fontSize: 11,
-    lineHeight: 15,
+    fontFamily: type.body,
+    fontSize: 9.5,
+    lineHeight: 13,
   },
   homeActionChevron: {
     fontFamily: type.body,
-    fontSize: 30,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 26,
     opacity: 0.72,
+  },
+  homeWakePrompt: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  homeWakeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  homeWakeText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.4,
   },
   momentCard: {
     width: '100%',
@@ -3500,32 +4398,31 @@ const styles = StyleSheet.create({
   },
   homeModuleGrid: {
     width: '100%',
-    gap: 10,
+    gap: 22,
   },
   homeModuleRow: {
     width: '100%',
     flexDirection: 'row',
-    gap: 10,
+    justifyContent: 'center',
+    gap: 16,
   },
   homeModuleTile: {
-    flex: 1,
+    width: '30%',
     minWidth: 0,
-    aspectRatio: 1,
+    height: 78,
     borderRadius: 14,
     borderWidth: 1,
     paddingHorizontal: 6,
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 4,
   },
   homeModuleTileLocked: {
     opacity: 0.44,
   },
   homeModuleIcon: {
-    fontFamily: type.display,
-    fontSize: 25,
-    lineHeight: 28,
+    opacity: 0.78,
   },
   tileMascot: {
     width: 46,
@@ -3536,16 +4433,15 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   homeModuleLabel: {
-    fontFamily: type.serif,
-    fontSize: 13,
-    lineHeight: 16,
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    lineHeight: 14,
     textAlign: 'center',
   },
   homeModuleKicker: {
-    fontFamily: type.bodyBold,
-    fontSize: 7.8,
+    fontFamily: type.body,
+    fontSize: 8,
     lineHeight: 10,
-    fontStyle: 'italic',
     textAlign: 'center',
   },
   solyRequestRoot: {
@@ -3570,6 +4466,177 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
     paddingTop: 10,
+  },
+  solyModernSheet: {
+    height: '92%',
+    maxHeight: '92%',
+    borderWidth: 0,
+    backgroundColor: '#164A31',
+  },
+  solyModernHandle: {
+    alignSelf: 'center',
+    width: 35,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#F0E9DB',
+    marginBottom: 14,
+  },
+  solyModernTitle: {
+    fontFamily: type.serif,
+    fontSize: 27,
+    lineHeight: 33,
+    color: '#F2EEE5',
+  },
+  solyModernClose: {
+    width: 29,
+    height: 29,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(220,225,216,0.18)',
+    backgroundColor: 'rgba(220,225,216,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  solyModernContent: {
+    paddingHorizontal: 21,
+    paddingTop: 18,
+    paddingBottom: 25,
+    gap: 16,
+  },
+  solyModernPrompt: {
+    fontFamily: type.serif,
+    fontSize: 21,
+    lineHeight: 27,
+    color: '#F2EEE5',
+    textAlign: 'center',
+  },
+  solyModernPromptAccent: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    color: '#CFA055',
+  },
+  solyModernNote: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 15,
+    color: '#AAB8AE',
+    textAlign: 'center',
+    marginTop: -10,
+  },
+  solyModernRequestField: {
+    minHeight: 104,
+    borderRadius: 8,
+    backgroundColor: '#F7F6F2',
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
+  solyModernRequestInput: {
+    minHeight: 76,
+    padding: 0,
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#173824',
+  },
+  solyModernRingButton: {
+    minHeight: 43,
+    borderRadius: 8,
+    backgroundColor: '#CFA055',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+    marginTop: 4,
+  },
+  solyModernRingText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 2.2,
+    color: '#092416',
+  },
+  solyModernChatLink: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 15,
+    color: '#AAB8AE',
+    textAlign: 'center',
+  },
+  solyChatBody: {
+    flex: 1,
+  },
+  solyChatMessages: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 25,
+    paddingBottom: 16,
+    gap: 12,
+  },
+  solyChatMessageRow: {
+    width: '100%',
+    flexDirection: 'row',
+  },
+  solyChatMessageRowSoly: {
+    justifyContent: 'flex-end',
+  },
+  solyChatMessageRowMine: {
+    justifyContent: 'flex-start',
+  },
+  solyChatBubble: {
+    maxWidth: '72%',
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    paddingTop: 11,
+    paddingBottom: 8,
+  },
+  solyChatBubbleSoly: {
+    backgroundColor: '#082719',
+  },
+  solyChatBubbleMine: {
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.36)',
+    backgroundColor: 'rgba(207,160,85,0.08)',
+  },
+  solyChatMessageText: {
+    fontFamily: type.body,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#F0EEE7',
+  },
+  solyChatMessageTime: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#91A297',
+    textAlign: 'right',
+    marginTop: 7,
+  },
+  solyChatComposer: {
+    minHeight: 88,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(207,160,85,0.12)',
+    backgroundColor: '#082719',
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  solyChatInput: {
+    flex: 1,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    paddingHorizontal: 18,
+    fontFamily: type.body,
+    fontSize: 12,
+    color: '#F2EEE5',
+  },
+  solyChatSend: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#CFA055',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   solyRequestHandle: {
     alignSelf: 'center',
@@ -3675,7 +4742,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   solyRequestPromptAccent: {
-    color: '#E6C982',
+    color: '#CFA055',
     fontStyle: 'italic',
   },
   solyRequestNote: {
@@ -3963,6 +5030,204 @@ const styles = StyleSheet.create({
     letterSpacing: 1.3,
     textTransform: 'uppercase',
   },
+  stayLayerScreen: {
+    flex: 1,
+    width: '100%',
+    minHeight: 0,
+    backgroundColor: '#041E0C',
+  },
+  stayLayerScreenExpanded: {
+    minHeight: 850,
+  },
+  stayLayerTop: {
+    height: 34,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  stayMascotPeek: {
+    position: 'absolute',
+    width: 66,
+    height: 58,
+    bottom: -43,
+    left: '50%',
+    marginLeft: -33,
+  },
+  stayLayerSheet: {
+    flex: 1,
+    minHeight: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 8,
+    paddingBottom: 8,
+    gap: 0,
+  },
+  stayLayerSheetExpanded: {
+    minHeight: 816,
+    paddingBottom: 18,
+  },
+  stayLayerHandle: {
+    marginBottom: 12,
+  },
+  stayDriverCard: {
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 16,
+    paddingTop: 13,
+    paddingBottom: 13,
+    marginTop: 12,
+  },
+  stayDriverHeadline: {
+    fontFamily: type.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#F1EEE6',
+    marginTop: 8,
+  },
+  stayDriverName: {
+    fontFamily: type.bodyMedium,
+    color: '#CFA055',
+  },
+  stayDriverRoute: {
+    fontFamily: type.body,
+    fontSize: 10.5,
+    lineHeight: 15,
+    color: '#A7B3AA',
+    marginTop: 8,
+  },
+  stayDriverCar: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 2,
+    color: '#71877A',
+  },
+  stayDriverButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#CFA055',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+  },
+  stayDriverButtonText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    color: '#CFA055',
+  },
+  stayDriverButtonLocated: {
+    borderColor: '#54D786',
+    backgroundColor: 'rgba(84,215,134,0.08)',
+  },
+  stayDriverButtonTextLocated: {
+    color: '#54D786',
+  },
+  stayLayerWelcome: {
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#F0ECE3',
+    marginVertical: 12,
+  },
+  stayDayCard: {
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    marginBottom: 10,
+  },
+  stayDayHead: {
+    minHeight: 43,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  stayDayCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  stayDayTitle: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 19,
+    lineHeight: 22,
+    color: '#F1EEE6',
+  },
+  stayDaySubtitle: {
+    fontFamily: type.body,
+    fontSize: 9,
+    lineHeight: 13,
+    color: '#9EADA3',
+  },
+  stayDayBadge: {
+    minWidth: 25,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(207,160,85,0.20)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stayDayBadgeText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10,
+    color: '#CFA055',
+  },
+  stayEventList: {
+    gap: 8,
+    marginTop: 9,
+  },
+  stayEventCard: {
+    minHeight: 61,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#173824',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stayEventCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  stayEventTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#F2EEE4',
+  },
+  stayEventPlace: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#B0BCB3',
+  },
+  stayEventDetail: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#D6DCD5',
+  },
+  stayEventAccent: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7,
+    lineHeight: 9,
+    letterSpacing: 1.4,
+    color: '#CFA055',
+  },
+  stayEventTime: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 13,
+    lineHeight: 16,
+    color: '#CFA055',
+  },
   stayScreen: {
     gap: 20,
   },
@@ -4005,7 +5270,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 16,
     gap: 8,
-    backgroundColor: 'rgba(230,201,130,0.05)',
+    backgroundColor: 'rgba(207,160,85,0.05)',
   },
   driverArrivalBadge: {
     alignSelf: 'flex-start',
@@ -4015,13 +5280,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    backgroundColor: 'rgba(230,201,130,0.12)',
+    backgroundColor: 'rgba(207,160,85,0.12)',
   },
   driverArrivalBadgeDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
   },
   driverArrivalBadgeText: {
     fontFamily: type.bodyBold,
@@ -4060,7 +5325,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.48)',
+    borderColor: 'rgba(207,160,85,0.48)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
@@ -4082,7 +5347,7 @@ const styles = StyleSheet.create({
     height: 178,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.18)',
+    borderColor: 'rgba(207,160,85,0.18)',
     overflow: 'hidden',
     backgroundColor: '#102E20',
   },
@@ -4106,7 +5371,7 @@ const styles = StyleSheet.create({
     width: 96,
     borderTopWidth: 2,
     borderStyle: 'dashed',
-    borderColor: 'rgba(230,201,130,0.88)',
+    borderColor: 'rgba(207,160,85,0.88)',
     transform: [{ rotate: '-18deg' }],
   },
   staticRoutePin: {
@@ -4114,10 +5379,10 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#E6C982',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.45,
     shadowRadius: 8,
     zIndex: 2,
@@ -4139,7 +5404,7 @@ const styles = StyleSheet.create({
     height: 132,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.18)',
+    borderColor: 'rgba(207,160,85,0.18)',
     backgroundColor: 'rgba(2,24,15,0.30)',
     overflow: 'hidden',
   },
@@ -4150,7 +5415,7 @@ const styles = StyleSheet.create({
     width: 92,
     borderTopWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(230,201,130,0.72)',
+    borderColor: 'rgba(207,160,85,0.72)',
     transform: [{ rotate: '-22deg' }],
   },
   stayRouteDashTwo: {
@@ -4160,7 +5425,7 @@ const styles = StyleSheet.create({
     width: 88,
     borderTopWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(230,201,130,0.72)',
+    borderColor: 'rgba(207,160,85,0.72)',
     transform: [{ rotate: '-20deg' }],
   },
   stayRoutePin: {
@@ -4171,7 +5436,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#C29B45',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#E6C982',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.38,
     shadowRadius: 8,
   },
@@ -4217,6 +5482,226 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     textAlign: 'center',
+  },
+  contactChatRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    backgroundColor: '#041E0C',
+  },
+  contactChatPanel: {
+    flex: 1,
+    marginTop: 42,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    overflow: 'hidden',
+    paddingTop: 8,
+  },
+  contactChatHandle: {
+    alignSelf: 'center',
+    width: 35,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#F0E9DB',
+    marginBottom: 19,
+  },
+  contactChatTitleRow: {
+    minHeight: 44,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  contactChatTitle: {
+    fontFamily: type.serif,
+    fontSize: 28,
+    lineHeight: 34,
+    color: '#F2EEE5',
+  },
+  contactChatClose: {
+    width: 29,
+    height: 29,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(220,225,216,0.18)',
+    backgroundColor: 'rgba(220,225,216,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactChatRule: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(207,160,85,0.28)',
+    marginHorizontal: 24,
+  },
+  contactChatProfile: {
+    minHeight: 68,
+    paddingHorizontal: 24,
+    backgroundColor: '#0A2C1B',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 19,
+  },
+  contactChatAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#B28A3F',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactChatAvatarText: {
+    fontFamily: type.serif,
+    fontSize: 18,
+    color: '#F6F0E4',
+  },
+  contactChatOnlineDot: {
+    position: 'absolute',
+    top: 1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#54D786',
+  },
+  contactChatName: {
+    fontFamily: type.serif,
+    fontSize: 18,
+    lineHeight: 21,
+    color: '#CFA055',
+  },
+  contactChatConnected: {
+    fontFamily: type.body,
+    fontSize: 9,
+    color: '#9FB0A5',
+  },
+  contactChatCarBar: {
+    minHeight: 50,
+    paddingHorizontal: 24,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(207,160,85,0.16)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  contactChatCar: {
+    flex: 1,
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    color: '#E6E6DC',
+  },
+  contactChatEta: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    letterSpacing: 1.2,
+    color: '#CFA055',
+  },
+  contactChatNotice: {
+    fontFamily: type.body,
+    fontSize: 9.5,
+    lineHeight: 15,
+    color: '#CFA055',
+    textAlign: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 16,
+  },
+  contactChatMessages: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingBottom: 12,
+    gap: 12,
+  },
+  contactChatMessageRow: {
+    width: '100%',
+    flexDirection: 'row',
+  },
+  contactChatMessageRowDriver: {
+    justifyContent: 'flex-end',
+  },
+  contactChatMessageRowMine: {
+    justifyContent: 'flex-start',
+  },
+  contactChatBubble: {
+    maxWidth: '72%',
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    paddingTop: 11,
+    paddingBottom: 8,
+  },
+  contactChatBubbleDriver: {
+    backgroundColor: '#082719',
+  },
+  contactChatBubbleMine: {
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.36)',
+    backgroundColor: 'rgba(207,160,85,0.08)',
+  },
+  contactChatMessageText: {
+    fontFamily: type.body,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#F0EEE7',
+  },
+  contactChatMessageTime: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#91A297',
+    textAlign: 'right',
+    marginTop: 6,
+  },
+  contactChatQuickReplies: {
+    minHeight: 50,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contactChatQuickReply: {
+    flex: 1,
+    minHeight: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.36)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  contactChatQuickReplyText: {
+    fontFamily: type.body,
+    fontSize: 8.5,
+    color: '#CFA055',
+  },
+  contactChatComposer: {
+    minHeight: 88,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(207,160,85,0.12)',
+    backgroundColor: '#082719',
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  contactChatInput: {
+    flex: 1,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    paddingHorizontal: 18,
+    fontFamily: type.body,
+    fontSize: 12,
+    color: '#F2EEE5',
+  },
+  contactChatSend: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#CFA055',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   driverChatRoot: {
     position: 'absolute',
@@ -4295,7 +5780,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(230,201,130,0.10)',
+    borderColor: 'rgba(207,160,85,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 18,
@@ -4334,15 +5819,15 @@ const styles = StyleSheet.create({
     height: 34,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.18)',
+    borderColor: 'rgba(207,160,85,0.18)',
     backgroundColor: 'rgba(244,239,228,0.055)',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 5,
   },
   driverMessageAvatarMine: {
-    borderColor: 'rgba(230,201,130,0.56)',
-    backgroundColor: 'rgba(230,201,130,0.16)',
+    borderColor: 'rgba(207,160,85,0.56)',
+    backgroundColor: 'rgba(207,160,85,0.16)',
   },
   driverMessageAvatarText: {
     fontFamily: type.bodyBold,
@@ -4357,16 +5842,16 @@ const styles = StyleSheet.create({
     minHeight: 66,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.12)',
+    borderColor: 'rgba(207,160,85,0.12)',
     backgroundColor: 'rgba(244,239,228,0.055)',
     padding: 14,
     gap: 7,
     justifyContent: 'center',
   },
   driverMessageBubbleMine: {
-    borderColor: 'rgba(230,201,130,0.46)',
+    borderColor: 'rgba(207,160,85,0.46)',
     borderLeftWidth: 3,
-    backgroundColor: 'rgba(230,201,130,0.10)',
+    backgroundColor: 'rgba(207,160,85,0.10)',
   },
   driverMessageMetaRow: {
     minHeight: 16,
@@ -4412,7 +5897,7 @@ const styles = StyleSheet.create({
     minHeight: 30,
     borderRadius: 15,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.34)',
+    borderColor: 'rgba(207,160,85,0.34)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
@@ -4435,7 +5920,7 @@ const styles = StyleSheet.create({
     minHeight: 43,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.10)',
+    borderColor: 'rgba(207,160,85,0.10)',
     backgroundColor: 'rgba(0,0,0,0.18)',
     paddingHorizontal: 16,
     fontFamily: type.bodyMedium,
@@ -4447,7 +5932,7 @@ const styles = StyleSheet.create({
     height: 43,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.42)',
+    borderColor: 'rgba(207,160,85,0.42)',
     backgroundColor: '#D7B763',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4652,6 +6137,235 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginVertical: spacing.sm,
   },
+  atmosphereScreen: {
+    flex: 1,
+    width: '100%',
+    minHeight: 0,
+    backgroundColor: '#041E0C',
+  },
+  atmosphereTop: {
+    height: 155,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  atmosphereAccountRow: {
+    minHeight: 44,
+    alignItems: 'flex-end',
+    marginBottom: 7,
+  },
+  atmosphereGreeting: {
+    fontFamily: type.serif,
+    fontSize: 27,
+    lineHeight: 32,
+    color: '#CFA055',
+  },
+  atmosphereMeta: {
+    fontFamily: type.body,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: '#ECE8DD',
+  },
+  atmosphereMascotPeek: {
+    position: 'absolute',
+    width: 70,
+    height: 62,
+    bottom: -37,
+    left: '50%',
+    marginLeft: -35,
+  },
+  atmosphereSheet: {
+    flex: 1,
+    minHeight: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  atmosphereHandle: {
+    alignSelf: 'center',
+    width: 35,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: '#EFE8D8',
+    marginBottom: 24,
+  },
+  atmosphereTitleRow: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  atmosphereTitle: {
+    fontFamily: type.serif,
+    fontSize: 29,
+    lineHeight: 35,
+    color: '#EEE9DF',
+  },
+  atmosphereClose: {
+    width: 29,
+    height: 29,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(220,225,216,0.18)',
+    backgroundColor: 'rgba(220,225,216,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  atmosphereRule: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(204,177,84,0.28)',
+  },
+  atmosphereIntro: {
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#F0EDE4',
+    marginTop: 17,
+    marginBottom: 16,
+  },
+  atmosphereHero: {
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 17,
+    paddingBottom: 18,
+  },
+  atmosphereDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  atmosphereDate: {
+    flex: 1,
+    fontFamily: type.serif,
+    fontSize: 21,
+    lineHeight: 26,
+    color: '#CFA055',
+  },
+  atmosphereToday: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8.5,
+    letterSpacing: 2,
+    color: '#CFA055',
+  },
+  atmosphereTempRow: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  atmosphereWeatherIcon: {
+    width: 68,
+    fontSize: 52,
+    lineHeight: 65,
+    color: '#FFA92E',
+    textAlign: 'center',
+  },
+  atmosphereTemp: {
+    fontFamily: type.serif,
+    fontSize: 57,
+    lineHeight: 65,
+    color: '#F5F0E6',
+  },
+  atmosphereCondition: {
+    fontFamily: type.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#EFECE3',
+    marginBottom: 12,
+  },
+  atmosphereStats: {
+    minHeight: 52,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(210,214,202,0.10)',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  atmosphereStat: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  atmosphereStatLabel: {
+    fontFamily: type.body,
+    fontSize: 9,
+    letterSpacing: 0.7,
+    color: '#7D9184',
+  },
+  atmosphereStatValue: {
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    color: '#E9E9DF',
+  },
+  atmosphereNote: {
+    minHeight: 56,
+    borderLeftWidth: 1,
+    borderLeftColor: '#CFA055',
+    borderRadius: 0,
+    backgroundColor: '#1C3C27',
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    justifyContent: 'center',
+  },
+  atmosphereNoteText: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 14,
+    lineHeight: 14,
+    color: '#CFA055',
+  },
+  atmosphereOtherLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7.5,
+    letterSpacing: 2,
+    color: '#91A395',
+    marginTop: 18,
+    marginBottom: 8,
+  },
+  atmosphereForecastRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+  },
+  atmosphereMini: {
+    flex: 1,
+    height: 75,
+    minWidth: 0,
+    borderRadius: 12,
+    backgroundColor: '#0D3522',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  atmosphereMiniLabel: {
+    width: '100%',
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#A6B4A9',
+    textAlign: 'center',
+  },
+  atmosphereMiniIcon: {
+    fontSize: 23,
+    lineHeight: 27,
+  },
+  atmosphereMiniTemp: {
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    color: '#F1EEE6',
+  },
+  atmosphereLiveStatus: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 12,
+    color: '#829489',
+    textAlign: 'center',
+    marginTop: 13,
+  },
   weatherHero: {
     gap: spacing.sm,
   },
@@ -4751,7 +6465,7 @@ const styles = StyleSheet.create({
     height: 1,
     left: -20,
     right: -20,
-    backgroundColor: 'rgba(230,201,130,0.18)',
+    backgroundColor: 'rgba(207,160,85,0.18)',
   },
   mapLineOne: {
     top: 70,
@@ -4870,7 +6584,7 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     marginTop: 5,
-    shadowColor: '#E6C982',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.6,
     shadowRadius: 8,
   },
@@ -4930,7 +6644,7 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(230,201,130,0.24)',
+    borderColor: 'rgba(207,160,85,0.24)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -4960,7 +6674,7 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 4.5,
-    shadowColor: '#E6C982',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.7,
     shadowRadius: 8,
   },
@@ -5002,6 +6716,199 @@ const styles = StyleSheet.create({
   distance: {
     fontFamily: type.serif,
     fontSize: 22,
+  },
+  currencyLayerScreen: {
+    flex: 1,
+    minHeight: 0,
+    width: '100%',
+    backgroundColor: '#041E0C',
+  },
+  currencyLayerTop: {
+    height: 166,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  currencyMascotPeek: {
+    position: 'absolute',
+    width: 92,
+    height: 81,
+    bottom: -49,
+    left: '50%',
+    marginLeft: -46,
+  },
+  currencyLayerSheet: {
+    flex: 1,
+    minHeight: 0,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 8,
+    paddingBottom: 14,
+  },
+  currencyConverterCard: {
+    zIndex: 20,
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 14,
+    marginTop: 18,
+    position: 'relative',
+  },
+  currencyRow: {
+    minHeight: 56,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.58)',
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  currencyRowLabel: {
+    fontFamily: type.body,
+    fontSize: 10,
+    color: '#C8D0C9',
+  },
+  currencyRowValue: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 20,
+    lineHeight: 24,
+    color: '#CFA055',
+  },
+  currencyCodeWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  currencyAmountInput: {
+    minWidth: 72,
+    padding: 0,
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 20,
+    lineHeight: 24,
+    color: '#CFA055',
+    textAlign: 'right',
+  },
+  currencySwap: {
+    zIndex: 2,
+    alignSelf: 'center',
+    width: 39,
+    height: 39,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#CFA055',
+    backgroundColor: '#0A2C1B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: -7,
+  },
+  currencyRateText: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 11,
+    color: '#C8D0C9',
+    textAlign: 'center',
+    marginTop: 12,
+  },
+  currencyDropdown: {
+    position: 'absolute',
+    zIndex: 50,
+    top: 151,
+    left: 20,
+    right: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.26)',
+    backgroundColor: '#164A31',
+    paddingVertical: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.32,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 12,
+  },
+  currencyDropdownItem: {
+    minHeight: 35,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  currencyDropdownItemActive: {
+    backgroundColor: '#0A2C1B',
+  },
+  currencyDropdownText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9.5,
+    color: '#F0EEE7',
+  },
+  currencyQuickCard: {
+    zIndex: 1,
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 17,
+    paddingBottom: 11,
+    marginTop: 18,
+  },
+  currencyQuickTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7.5,
+    letterSpacing: 2,
+    color: '#CFA055',
+    marginBottom: 10,
+  },
+  currencyQuickRow: {
+    minHeight: 59,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginBottom: 10,
+  },
+  currencyQuickDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#CFA055',
+    shadowColor: '#CFA055',
+    shadowOpacity: 0.6,
+    shadowRadius: 5,
+  },
+  currencyQuickCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  currencyQuickLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    lineHeight: 13,
+    color: '#F0EEE7',
+  },
+  currencyQuickMad: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 11,
+    color: '#9BAA9F',
+  },
+  currencyQuickValue: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 15,
+    color: '#CFA055',
+  },
+  currencyAttribution: {
+    fontFamily: type.body,
+    fontSize: 6.5,
+    lineHeight: 9,
+    color: '#71877A',
+    textAlign: 'center',
   },
   converter: {
     gap: spacing.sm,
@@ -5265,6 +7172,696 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 28,
   },
+  accountModernRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  accountModernSheet: {
+    height: '92%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 8,
+    paddingBottom: 14,
+    overflow: 'hidden',
+  },
+  accountModernHeader: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  accountModernTitle: {
+    fontFamily: type.serif,
+    fontSize: 28,
+    lineHeight: 34,
+    color: '#F2EEE5',
+  },
+  accountModernContent: {
+    flex: 1,
+    paddingTop: 18,
+  },
+  accountModernHero: {
+    minHeight: 171,
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    paddingBottom: 13,
+  },
+  accountModernHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  accountModernSince: {
+    fontFamily: type.bodyMedium,
+    fontSize: 6.5,
+    letterSpacing: 1.4,
+    color: '#CFA055',
+  },
+  accountModernTierBadge: {
+    minHeight: 21,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#CFA055',
+    paddingHorizontal: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountModernTierText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7,
+    letterSpacing: 1.3,
+    color: '#CFA055',
+  },
+  accountModernName: {
+    fontFamily: type.serif,
+    fontSize: 21,
+    lineHeight: 26,
+    color: '#F2EEE5',
+    marginTop: 7,
+  },
+  accountModernClient: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 1,
+    color: '#B1BDB4',
+    marginTop: 3,
+  },
+  accountModernProgressLabels: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 13,
+  },
+  accountModernProgressLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7,
+    letterSpacing: 1.2,
+    color: '#CFA055',
+  },
+  accountModernProgressValue: {
+    fontFamily: type.body,
+    fontSize: 8,
+    letterSpacing: 1,
+    color: '#F0EEE7',
+  },
+  accountModernProgressTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#294C38',
+    overflow: 'hidden',
+    marginTop: 11,
+  },
+  accountModernProgressFill: {
+    width: '42%',
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: '#CFA055',
+  },
+  accountModernProgressNote: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 10,
+    lineHeight: 13,
+    color: '#CFA055',
+    textAlign: 'center',
+    marginTop: 11,
+  },
+  accountModernMenu: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    gap: 10,
+    marginTop: 16,
+  },
+  accountModernMenuExpanded: {
+    justifyContent: 'flex-start',
+  },
+  accountAdvantageExpanded: {
+    flex: 1,
+    minHeight: 0,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#0A2C1B',
+    overflow: 'hidden',
+  },
+  accountModernRow: {
+    flex: 0,
+    height: 54,
+    minHeight: 54,
+    maxHeight: 54,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  accountModernRowActive: {
+    borderColor: '#CFA055',
+    backgroundColor: '#123822',
+  },
+  accountModernRowExpanded: {
+    flex: 0,
+    height: 54,
+    maxHeight: 54,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: '#0A2C1B',
+  },
+  accountModernRowCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  accountModernRowTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#F2EEE5',
+  },
+  accountModernRowSubtitle: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 11,
+    color: '#A7B5AB',
+  },
+  accountTierList: {
+    flex: 1,
+    minHeight: 0,
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 11,
+  },
+  accountTierCardModern: {
+    flex: 1,
+    minHeight: 62,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    backgroundColor: '#173824',
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  accountTierCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  accountTierCardName: {
+    fontFamily: type.bodyMedium,
+    fontSize: 12,
+    lineHeight: 15,
+  },
+  accountTierCurrentBadge: {
+    minHeight: 19,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.28)',
+    backgroundColor: 'rgba(207,160,85,0.16)',
+    paddingHorizontal: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountTierCurrentText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 6.5,
+    letterSpacing: 1.4,
+    color: '#CFA055',
+  },
+  accountTierCardDescription: {
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#F0EEE7',
+    marginTop: 4,
+  },
+  accountTierCardNote: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 10,
+    color: '#A9B6AD',
+    marginTop: 2,
+  },
+  accountPersonalList: {
+    flex: 1,
+    minHeight: 0,
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 12,
+  },
+  accountPersonalCard: {
+    flex: 1,
+    minHeight: 58,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    backgroundColor: '#173824',
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  accountPersonalDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#E6B85F',
+    shadowColor: '#E6B85F',
+    shadowOpacity: 0.8,
+    shadowRadius: 7,
+    elevation: 5,
+  },
+  accountPersonalCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  accountPersonalLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 13,
+    lineHeight: 17,
+    color: '#F2EEE5',
+  },
+  accountPersonalDetail: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#A9B6AD',
+  },
+  accountPersonalMarker: {
+    fontFamily: type.bodyMedium,
+    fontSize: 15,
+    color: '#CFA055',
+  },
+  accountPaymentContent: {
+    flex: 1,
+    minHeight: 0,
+    gap: 20,
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 14,
+  },
+  accountPaymentExpanded: {
+    flex: 0,
+    height: 224,
+  },
+  accountPrivacyExpanded: {
+    flex: 0,
+    height: 218,
+  },
+  accountModernPaymentCard: {
+    minHeight: 78,
+    borderRadius: 14,
+    backgroundColor: '#203F2C',
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  accountPaymentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#31513B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountPaymentCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  accountPaymentName: {
+    fontFamily: type.bodyMedium,
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#F2EEE5',
+  },
+  accountPaymentExpiry: {
+    fontFamily: type.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#A9B6AD',
+  },
+  accountVisaBadge: {
+    minWidth: 53,
+    height: 25,
+    borderRadius: 5,
+    backgroundColor: '#2029A8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountVisaText: {
+    fontFamily: type.bodyBold,
+    fontSize: 11,
+    letterSpacing: 1.4,
+    color: '#FFFFFF',
+  },
+  accountModernPaymentRemove: {
+    width: 29,
+    height: 29,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(220,225,216,0.18)',
+    backgroundColor: 'rgba(220,225,216,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountPaymentConfirmActions: {
+    flex: 1.7,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  accountPaymentCancel: {
+    flex: 1,
+    height: 43,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#C9D1CB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountPaymentCancelText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: '#F2EEE5',
+  },
+  accountPaymentDelete: {
+    flex: 1,
+    height: 43,
+    borderRadius: 10,
+    backgroundColor: '#B84137',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountPaymentDeleteText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: '#FFFFFF',
+  },
+  accountAddPayment: {
+    minHeight: 58,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(207,160,85,0.70)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  accountAddPaymentText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 14,
+    color: '#CFA055',
+  },
+  accountPrivacyList: {
+    flex: 1,
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 12,
+  },
+  accountPrivacyModernCard: {
+    flex: 1,
+    minHeight: 62,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    backgroundColor: '#173824',
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  accountPrivacyModernTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 13,
+    lineHeight: 17,
+    color: '#F2EEE5',
+  },
+  accountPrivacyModernDetail: {
+    fontFamily: type.body,
+    fontSize: 9.5,
+    lineHeight: 14,
+    color: '#A9B6AD',
+  },
+  accountPrivacySwitch: {
+    width: 59,
+    height: 34,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.48)',
+    padding: 3,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  accountPrivacySwitchOn: {
+    borderColor: 'rgba(207,160,85,0.70)',
+  },
+  accountPrivacyKnob: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#66736B',
+  },
+  accountPrivacyKnobOn: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#D7A64F',
+  },
+  paymentEntryOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    justifyContent: 'flex-end',
+  },
+  paymentEntryBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.44)',
+  },
+  paymentEntrySheet: {
+    height: '94%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 27,
+    paddingTop: 14,
+    paddingBottom: 10,
+    overflow: 'hidden',
+  },
+  paymentEntryHeader: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  paymentEntryTitle: {
+    fontFamily: type.serif,
+    fontSize: 31,
+    lineHeight: 38,
+    color: '#F2EEE5',
+  },
+  paymentEntryContent: {
+    paddingTop: 21,
+    paddingBottom: 14,
+    gap: 17,
+  },
+  paymentEntryIntro: {
+    fontFamily: type.body,
+    fontSize: 11.5,
+    lineHeight: 20,
+    color: '#B8C2BA',
+    textAlign: 'center',
+    paddingHorizontal: 3,
+  },
+  paymentEntryIntroStrong: {
+    fontFamily: type.bodyBold,
+    color: '#D9DED9',
+  },
+  paymentMethodTabs: {
+    height: 50,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.28)',
+    backgroundColor: '#23462F',
+    padding: 5,
+    flexDirection: 'row',
+  },
+  paymentMethodTab: {
+    flex: 1,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentMethodTabActive: {
+    backgroundColor: '#56653E',
+  },
+  paymentMethodText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 13,
+    color: '#D3D8D3',
+  },
+  paymentField: {
+    gap: 6,
+  },
+  paymentFieldLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8.5,
+    letterSpacing: 1.5,
+    color: '#CFA055',
+  },
+  paymentFieldInput: {
+    height: 49,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.17)',
+    backgroundColor: '#0D2F20',
+    paddingHorizontal: 13,
+    fontFamily: type.body,
+    fontSize: 13,
+    color: '#F2EEE5',
+  },
+  paymentEntrySave: {
+    height: 53,
+    borderRadius: 10,
+    backgroundColor: '#D5A452',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  paymentEntrySaveText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    letterSpacing: 2.3,
+    color: '#092718',
+  },
+  paymentEntrySecurity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  paymentEntrySecurityText: {
+    fontFamily: type.body,
+    fontSize: 9,
+    color: '#A9B6AD',
+  },
+  inviteGuestOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30,
+    justifyContent: 'flex-end',
+  },
+  inviteGuestSheet: {
+    minHeight: 470,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 27,
+    paddingTop: 14,
+    paddingBottom: 25,
+    overflow: 'hidden',
+  },
+  inviteGuestHeader: {
+    minHeight: 61,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  inviteGuestTitle: {
+    fontFamily: type.serif,
+    fontSize: 30,
+    lineHeight: 37,
+    color: '#F2EEE5',
+  },
+  inviteGuestIntro: {
+    fontFamily: type.body,
+    fontSize: 12.5,
+    lineHeight: 21,
+    color: '#E0E4DF',
+    textAlign: 'center',
+    marginTop: 21,
+    marginBottom: 20,
+  },
+  inviteLinkCard: {
+    height: 55,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.38)',
+    backgroundColor: '#0D2F20',
+    paddingLeft: 13,
+    paddingRight: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  inviteLinkText: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: type.body,
+    fontSize: 11,
+    color: '#CFA055',
+  },
+  inviteCopyButton: {
+    minWidth: 78,
+    height: 31,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.62)',
+    backgroundColor: '#344C2D',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inviteCopyText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.4,
+    color: '#CFA055',
+  },
+  inviteChannels: {
+    height: 68,
+    flexDirection: 'row',
+    gap: 9,
+    marginTop: 20,
+  },
+  inviteChannelButton: {
+    flex: 1,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    backgroundColor: '#0D2F20',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  inviteChannelText: {
+    fontFamily: type.body,
+    fontSize: 9.5,
+    color: '#F2EEE5',
+  },
+  inviteGuestNote: {
+    minHeight: 78,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(207,160,85,0.24)',
+    backgroundColor: '#214D33',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    justifyContent: 'center',
+    marginTop: 21,
+  },
+  inviteGuestNoteText: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#D6D8CB',
+  },
   accountModalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -5293,7 +7890,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(230,201,130,0.24)',
+    backgroundColor: 'rgba(207,160,85,0.24)',
     zIndex: 2,
   },
   accountHeader: {
@@ -5302,7 +7899,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingBottom: 13,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(230,201,130,0.12)',
+    borderBottomColor: 'rgba(207,160,85,0.12)',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -5313,14 +7910,14 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.30)',
+    borderColor: 'rgba(207,160,85,0.30)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   accountHeaderIconText: {
     fontFamily: type.display,
     fontSize: 22,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountHeaderCopy: {
     flex: 1,
@@ -5329,7 +7926,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 24,
     lineHeight: 27,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountSubtitle: {
     fontFamily: type.bodyBold,
@@ -5343,7 +7940,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.30)',
+    borderColor: 'rgba(207,160,85,0.30)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5366,8 +7963,8 @@ const styles = StyleSheet.create({
   accountHeroCard: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.28)',
-    backgroundColor: 'rgba(230,201,130,0.08)',
+    borderColor: 'rgba(207,160,85,0.28)',
+    backgroundColor: 'rgba(207,160,85,0.08)',
     padding: 18,
     gap: 8,
   },
@@ -5381,7 +7978,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 15,
     letterSpacing: 6,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountHeroSince: {
     fontFamily: type.bodyBold,
@@ -5415,7 +8012,7 @@ const styles = StyleSheet.create({
     fontSize: 17,
     textAlign: 'center',
     letterSpacing: 6,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountInnerTagline: {
     fontFamily: type.bodyBold,
@@ -5434,7 +8031,7 @@ const styles = StyleSheet.create({
     fontFamily: type.bodyBold,
     fontSize: 9,
     letterSpacing: 0.8,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountProgressMiddle: {
     fontFamily: type.bodyBold,
@@ -5450,7 +8047,7 @@ const styles = StyleSheet.create({
   accountProgressFill: {
     width: '42%',
     height: '100%',
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
   },
   accountSectionBlock: {
     gap: 12,
@@ -5479,7 +8076,7 @@ const styles = StyleSheet.create({
     minHeight: 72,
     borderRadius: 9,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.12)',
+    borderColor: 'rgba(207,160,85,0.12)',
     backgroundColor: 'rgba(244,239,228,0.035)',
     padding: 13,
     flexDirection: 'row',
@@ -5488,13 +8085,13 @@ const styles = StyleSheet.create({
   },
   accountAdvantageCardActive: {
     borderColor: '#D4A84F',
-    backgroundColor: 'rgba(230,201,130,0.06)',
+    backgroundColor: 'rgba(207,160,85,0.06)',
   },
   accountTierBadge: {
     width: 90,
     minHeight: 28,
     borderRadius: 4,
-    backgroundColor: 'rgba(230,201,130,0.42)',
+    backgroundColor: 'rgba(207,160,85,0.42)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5525,13 +8122,13 @@ const styles = StyleSheet.create({
     color: 'rgba(244,239,228,0.48)',
   },
   accountAdvantageNoteActive: {
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountInfoCard: {
     minHeight: 64,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.16)',
+    borderColor: 'rgba(207,160,85,0.16)',
     backgroundColor: 'rgba(244,239,228,0.04)',
     paddingHorizontal: 14,
     flexDirection: 'row',
@@ -5542,8 +8139,8 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#E6C982',
-    shadowColor: '#E6C982',
+    backgroundColor: '#CFA055',
+    shadowColor: '#CFA055',
     shadowOpacity: 0.8,
     shadowRadius: 6,
   },
@@ -5568,13 +8165,13 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     fontFamily: type.serif,
     fontSize: 13,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountPaymentCard: {
     minHeight: 58,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.16)',
+    borderColor: 'rgba(207,160,85,0.16)',
     backgroundColor: 'rgba(244,239,228,0.04)',
     paddingHorizontal: 18,
     flexDirection: 'row',
@@ -5586,7 +8183,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 12,
     letterSpacing: 1.6,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountPaymentRemove: {
     fontFamily: type.body,
@@ -5598,7 +8195,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(230,201,130,0.34)',
+    borderColor: 'rgba(207,160,85,0.34)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5606,13 +8203,13 @@ const styles = StyleSheet.create({
     fontFamily: type.bodyBold,
     fontSize: 11,
     letterSpacing: 0.6,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountPrivacyCard: {
     minHeight: 64,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.16)',
+    borderColor: 'rgba(207,160,85,0.16)',
     backgroundColor: 'rgba(244,239,228,0.04)',
     paddingHorizontal: 14,
     flexDirection: 'row',
@@ -5640,7 +8237,7 @@ const styles = StyleSheet.create({
   },
   accountSwitchOn: {
     borderColor: '#D4A84F',
-    backgroundColor: 'rgba(230,201,130,0.42)',
+    backgroundColor: 'rgba(207,160,85,0.42)',
   },
   accountSwitchKnob: {
     width: 16,
@@ -5650,13 +8247,13 @@ const styles = StyleSheet.create({
   },
   accountSwitchKnobOn: {
     alignSelf: 'flex-end',
-    backgroundColor: '#E6C982',
+    backgroundColor: '#CFA055',
   },
   accountGuestCard: {
     minHeight: 56,
     borderRadius: 9,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.14)',
+    borderColor: 'rgba(207,160,85,0.14)',
     backgroundColor: 'rgba(244,239,228,0.04)',
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -5671,8 +8268,8 @@ const styles = StyleSheet.create({
     height: 34,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.20)',
-    backgroundColor: 'rgba(230,201,130,0.18)',
+    borderColor: 'rgba(207,160,85,0.20)',
+    backgroundColor: 'rgba(207,160,85,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5701,7 +8298,7 @@ const styles = StyleSheet.create({
     color: 'rgba(244,239,228,0.58)',
   },
   accountGuestRoleOwner: {
-    color: '#E6C982',
+    color: '#CFA055',
   },
   accountGuestStatus: {
     maxWidth: 86,
@@ -5729,21 +8326,169 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
+  formalitiesModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  formalitiesSheet: {
+    height: '92%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#164A31',
+    paddingHorizontal: 21,
+    paddingTop: 10,
+    paddingBottom: 12,
+    overflow: 'hidden',
+  },
+  formalitiesHeader: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  formalitiesTitle: {
+    fontFamily: type.serif,
+    fontSize: 28,
+    lineHeight: 34,
+    color: '#F2EEE5',
+  },
+  formalitiesIntro: {
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 18,
+    color: '#B8C2BA',
+    textAlign: 'center',
+    marginTop: 18,
+    marginBottom: 15,
+    paddingHorizontal: 8,
+  },
+  formalitiesAlert: {
+    minHeight: 70,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
+    backgroundColor: '#0D2F20',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  formalitiesAlertIcon: {
+    width: 39,
+    height: 39,
+    borderRadius: 10,
+    backgroundColor: 'rgba(207,160,85,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  formalitiesAlertCopy: {
+    flex: 1,
+  },
+  formalitiesAlertTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#F2EEE5',
+  },
+  formalitiesAlertText: {
+    fontFamily: type.body,
+    fontSize: 9.5,
+    lineHeight: 14,
+    color: '#CFA055',
+  },
+  formalitiesScroll: {
+    flex: 1,
+    marginTop: 14,
+  },
+  formalitiesList: {
+    gap: 12,
+    paddingBottom: 20,
+  },
+  formalitiesCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.28)',
+    backgroundColor: '#0D2F20',
+    padding: 14,
+    gap: 10,
+  },
+  formalitiesCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  formalitiesName: {
+    fontFamily: type.serif,
+    fontSize: 19,
+    lineHeight: 24,
+    color: '#F2EEE5',
+  },
+  formalitiesStatus: {
+    minHeight: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.45)',
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  formalitiesStatusComplete: {
+    borderColor: 'rgba(84,215,134,0.50)',
+    backgroundColor: 'rgba(84,215,134,0.10)',
+  },
+  formalitiesStatusText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 7,
+    letterSpacing: 1.1,
+    color: '#CFA055',
+  },
+  formalitiesStatusTextComplete: {
+    color: '#54D786',
+  },
+  formalitiesDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  formalitiesDetail: {
+    flex: 1,
+    fontFamily: type.body,
+    fontSize: 10.5,
+    lineHeight: 15,
+    color: '#B8C2BA',
+  },
+  formalitiesUpdate: {
+    minHeight: 42,
+    borderRadius: 9,
+    backgroundColor: '#D5A452',
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    marginTop: 3,
+  },
+  formalitiesUpdateText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    color: '#082718',
+  },
   arrivalBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.58)',
   },
   arrivalSheet: {
-    width: '92%',
+    width: '100%',
     maxWidth: Platform.OS === 'web' ? 392 : undefined,
-    height: Platform.OS === 'web' ? '82%' : '88%',
-    marginBottom: Platform.OS === 'web' ? 16 : 18,
+    height: '92%',
+    marginBottom: 0,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     borderBottomLeftRadius: Platform.OS === 'web' ? 24 : 0,
     borderBottomRightRadius: Platform.OS === 'web' ? 24 : 0,
     overflow: 'hidden',
-    backgroundColor: '#113E28',
+    backgroundColor: '#164A31',
   },
   arrivalHandle: {
     position: 'absolute',
@@ -5752,7 +8497,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(230,201,130,0.28)',
+    backgroundColor: '#F0E9DB',
     zIndex: 2,
   },
   arrivalHeader: {
@@ -5763,21 +8508,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#17472F',
+    backgroundColor: '#164A31',
   },
   arrivalHeaderIcon: {
     width: 40,
     height: 40,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.32)',
+    borderColor: 'rgba(207,160,85,0.32)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   arrivalHeaderIconText: {
     fontFamily: type.display,
     fontSize: 21,
-    color: '#E6C982',
+    color: '#F2EEE5',
   },
   arrivalHeaderCopy: {
     flex: 1,
@@ -5786,7 +8531,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 24,
     lineHeight: 27,
-    color: '#E6C982',
+    color: '#CFA055',
   },
   arrivalSubtitle: {
     fontFamily: type.bodyBold,
@@ -5800,7 +8545,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(230,201,130,0.32)',
+    borderColor: 'rgba(207,160,85,0.32)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5812,7 +8557,7 @@ const styles = StyleSheet.create({
   },
   arrivalScroll: {
     flex: 1,
-    backgroundColor: '#F4EFE4',
+    backgroundColor: '#164A31',
   },
   arrivalContent: {
     paddingHorizontal: 22,
@@ -5836,7 +8581,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 29,
     lineHeight: 35,
-    color: '#0F3524',
+    color: '#F2EEE5',
   },
   arrivalIntroAccent: {
     color: '#B9903D',
@@ -5849,14 +8594,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: 'center',
     fontStyle: 'italic',
-    color: 'rgba(15,53,36,0.62)',
+    color: '#A9B6AD',
   },
   arrivalOption: {
     width: '100%',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#DDD2BD',
-    backgroundColor: '#FFFDF8',
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#0D2F20',
     padding: 16,
     gap: 15,
   },
@@ -5880,7 +8625,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   arrivalOptionIconActive: {
-    backgroundColor: 'rgba(182,139,53,0.04)',
+    backgroundColor: 'rgba(207,160,85,0.08)',
   },
   arrivalOptionIconText: {
     fontFamily: type.display,
@@ -5895,7 +8640,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 21,
     lineHeight: 25,
-    color: '#183B2B',
+    color: '#F2EEE5',
   },
   arrivalOptionSubtitle: {
     maxWidth: 180,
@@ -5903,11 +8648,11 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 13,
     letterSpacing: 3,
-    color: 'rgba(24,59,43,0.46)',
+    color: '#A9B6AD',
   },
   arrivalExpanded: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#D8CBB4',
+    borderTopColor: 'rgba(207,160,85,0.25)',
     paddingTop: 14,
     gap: 14,
   },
@@ -5918,12 +8663,12 @@ const styles = StyleSheet.create({
     fontFamily: type.bodyBold,
     fontSize: 9,
     letterSpacing: 4,
-    color: 'rgba(24,59,43,0.48)',
+    color: '#CFA055',
   },
   arrivalSelectRow: {
     minHeight: 28,
     borderBottomWidth: 1,
-    borderBottomColor: '#D8CBB4',
+    borderBottomColor: 'rgba(207,160,85,0.30)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -5934,7 +8679,7 @@ const styles = StyleSheet.create({
     fontFamily: type.serif,
     fontSize: 16,
     lineHeight: 22,
-    color: '#173828',
+    color: '#F2EEE5',
   },
   arrivalSelectChevron: {
     fontFamily: type.bodyBold,
@@ -5944,18 +8689,18 @@ const styles = StyleSheet.create({
   arrivalTextInput: {
     minHeight: 30,
     borderBottomWidth: 1,
-    borderBottomColor: '#D8CBB4',
+    borderBottomColor: 'rgba(207,160,85,0.30)',
     padding: 0,
     fontFamily: type.serif,
     fontSize: 17,
-    color: '#173828',
+    color: '#F2EEE5',
   },
   arrivalMiniPanel: {
     minHeight: 78,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D8CBB4',
-    backgroundColor: '#F8F3E8',
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#173824',
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -5969,11 +8714,11 @@ const styles = StyleSheet.create({
   arrivalMiniValue: {
     minHeight: 28,
     borderBottomWidth: 1,
-    borderBottomColor: '#D8CBB4',
+    borderBottomColor: 'rgba(207,160,85,0.30)',
     padding: 0,
     fontFamily: type.serif,
     fontSize: 17,
-    color: '#173828',
+    color: '#F2EEE5',
   },
   arrivalClock: {
     marginBottom: 8,
@@ -5984,7 +8729,7 @@ const styles = StyleSheet.create({
   trainDropdown: {
     borderWidth: 1,
     borderColor: '#9E895F',
-    backgroundColor: '#F4EFE4',
+    backgroundColor: '#173824',
   },
   trainOption: {
     minHeight: 30,
@@ -5997,7 +8742,7 @@ const styles = StyleSheet.create({
   trainOptionText: {
     fontFamily: type.body,
     fontSize: 12,
-    color: '#173828',
+    color: '#F2EEE5',
   },
   trainOptionTextActive: {
     color: '#FFFFFF',
@@ -6007,7 +8752,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     fontStyle: 'italic',
-    color: 'rgba(24,59,43,0.66)',
+    color: '#A9B6AD',
   },
   arrivalFootnote: {
     paddingHorizontal: 10,
@@ -6016,12 +8761,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontStyle: 'italic',
     textAlign: 'center',
-    color: 'rgba(24,59,43,0.70)',
+    color: '#B8C2BA',
   },
   arrivalConfirm: {
     minHeight: 46,
     borderRadius: 10,
-    backgroundColor: '#B68B35',
+    backgroundColor: '#D5A452',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -6034,6 +8779,6 @@ const styles = StyleSheet.create({
     fontFamily: type.bodyBold,
     fontSize: 12,
     letterSpacing: 3,
-    color: '#FFFDF8',
+    color: '#082718',
   },
 });

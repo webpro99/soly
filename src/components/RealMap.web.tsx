@@ -100,10 +100,10 @@ function tileUrls(latitude: number, longitude: number, zoom: number) {
   const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
 
   return [
-    `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`,
-    `https://tile.openstreetmap.org/${zoom}/${x + 1}/${y}.png`,
-    `https://tile.openstreetmap.org/${zoom}/${x}/${y + 1}.png`,
-    `https://tile.openstreetmap.org/${zoom}/${x + 1}/${y + 1}.png`,
+    `https://a.basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}.png`,
+    `https://b.basemaps.cartocdn.com/dark_all/${zoom}/${x + 1}/${y}.png`,
+    `https://c.basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y + 1}.png`,
+    `https://d.basemaps.cartocdn.com/dark_all/${zoom}/${x + 1}/${y + 1}.png`,
   ];
 }
 
