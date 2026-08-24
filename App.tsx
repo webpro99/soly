@@ -44,6 +44,9 @@ import {
 } from './src/components/SolyPrimitives';
 import { RealMap } from './src/components/RealMap';
 import { StayLocatorMap } from './src/components/StayLocatorMap';
+import { AuthScreen } from './src/components/AuthScreen';
+import { useSolySession } from './src/hooks/useSolySession';
+import type { SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
   companions,
@@ -398,6 +401,7 @@ export default function App() {
   const [driverChatOpen, setDriverChatOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [solyAwake, setSolyAwake] = useState(false);
+  const session = useSolySession();
   const liveWeather = useLiveWeather();
   const exchangeRate = useExchangeRate();
   const sceneName = modules.find((item) => item.key === screen)?.scene ?? screenScene(screen);
@@ -412,8 +416,19 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [fontsLoaded]);
 
-  if (!fontsLoaded || !launchComplete) {
+  if (!fontsLoaded || !launchComplete || session.loading) {
     return <SolyLoadingScreen />;
+  }
+
+  if (!session.user) {
+    return (
+      <AuthScreen
+        submitting={session.submitting}
+        brandName={session.bootstrap?.brand.name}
+        onLogin={session.login}
+        onRegister={session.register}
+      />
+    );
   }
 
   const navigate = (next: ModuleKey, vibration = 6) => {
@@ -491,7 +506,7 @@ export default function App() {
               onPress={() => navigate('account')}
               style={[styles.avatar, { borderColor: scene.border, backgroundColor: scene.surfaceRaised }]}
             >
-              <Text style={[styles.avatarText, { color: scene.accentPrimary }]}>ZF</Text>
+              <Text style={[styles.avatarText, { color: scene.accentPrimary }]}>{userInitials(session.user.name)}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -508,7 +523,15 @@ export default function App() {
           keyboardShouldPersistTaps="handled"
         >
           {screen === 'home' ? (
-            <HomeScreen navigate={navigate} notify={notify} weather={liveWeather} awake={solyAwake} onWake={() => setSolyAwake(true)} />
+            <HomeScreen
+              navigate={navigate}
+              notify={notify}
+              weather={liveWeather}
+              awake={solyAwake}
+              onWake={() => setSolyAwake(true)}
+              user={session.user}
+              onLogout={session.logout}
+            />
           ) : screen === 'stay' ? (
             <StayScreen onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} onClose={goBack} />
           ) : screen === 'butler' ? (
@@ -532,7 +555,7 @@ export default function App() {
           ) : screen === 'chat' ? (
             <ChatScreen notify={notify} />
           ) : (
-            <AccountScreen notify={notify} />
+            <AccountScreen notify={notify} user={session.user} onLogout={session.logout} />
           )}
         </ScrollView>
 
@@ -672,12 +695,16 @@ function HomeScreen({
   weather,
   awake,
   onWake,
+  user,
+  onLogout,
 }: {
   navigate: (screen: ModuleKey, vibration?: number) => void;
   notify: (message: string, pattern?: number | number[]) => void;
   weather: LiveWeatherState;
   awake: boolean;
   onWake: () => void;
+  user: SolyUser;
+  onLogout: () => Promise<void>;
 }) {
   const scene = scenes.immersive;
   const fade = useFadeUp();
@@ -707,15 +734,15 @@ function HomeScreen({
           style={[styles.homeAccountPill, { backgroundColor: 'rgba(10,51,31,0.48)', borderColor: scene.borderSoft }]}
         >
           <View style={[styles.homeAccountInitial, { backgroundColor: scene.accentDeep }]}>
-            <Text style={[styles.homeAccountInitialText, { color: scene.accentPrimary }]}>T</Text>
+            <Text style={[styles.homeAccountInitialText, { color: scene.accentPrimary }]}>{userInitials(user.name).slice(0, 1)}</Text>
           </View>
-          <Text style={[styles.homeAccountName, { color: scene.accentPrimary }]}>Thibaut</Text>
+          <Text style={[styles.homeAccountName, { color: scene.accentPrimary }]}>{firstName(user.name)}</Text>
           <Text style={[styles.homeAccountCaret, { color: scene.accentPrimary }]}>⌄</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.homeHeader}>
-        <Text style={[styles.homeGreeting, { color: scene.accentPrimary }]}>Bonjour, Thibaut</Text>
+        <Text style={[styles.homeGreeting, { color: scene.accentPrimary }]}>Bonjour, {firstName(user.name)}</Text>
         <Text style={[styles.homeMeta, { color: scene.textPrimary }]}>Vendredi 15 mai  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '27°C'}</Text>
       </View>
 
@@ -823,7 +850,7 @@ function HomeScreen({
           notify('SOLÝ est prévenu · un majordome arrive dans le chat', [12, 30, 12]);
         }}
       />
-      <AccountSheet visible={accountSheetOpen} onClose={() => setAccountSheetOpen(false)} />
+      <AccountSheet visible={accountSheetOpen} onClose={() => setAccountSheetOpen(false)} user={user} onLogout={onLogout} />
     </Animated.View>
   );
 }
@@ -1179,7 +1206,17 @@ function SolyRequestPickerLabel({ label, scene }: { label: string; scene: typeof
   );
 }
 
-function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function AccountSheet({
+  visible,
+  onClose,
+  user,
+  onLogout,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  user: SolyUser;
+  onLogout: () => Promise<void>;
+}) {
   const [activeSection, setActiveSection] = useState<AccountSection | ''>('');
   const [paymentDeleteConfirm, setPaymentDeleteConfirm] = useState(false);
   const [paymentRemoved, setPaymentRemoved] = useState(false);
@@ -1194,6 +1231,15 @@ function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => v
     activeSection === 'personal' ||
     activeSection === 'payment' ||
     activeSection === 'privacy';
+  const loyaltyName = (user.loyalty?.level_name || 'Voyageur').toUpperCase();
+  const loyaltyPoints = user.loyalty?.points_24m ?? 0;
+  const nextThreshold = user.loyalty?.next_threshold_points ?? 0;
+  const progress = nextThreshold > 0 ? Math.min(100, Math.round((loyaltyPoints / nextThreshold) * 100)) : 0;
+  const personalInfo = [
+    { label: user.name, detail: 'Titulaire du compte CRM', marker: '' },
+    { label: user.phone || 'Téléphone non renseigné', detail: 'Téléphone mobile', marker: user.phone ? '✓' : '' },
+    { label: user.email, detail: 'Courriel de connexion', marker: '✓' },
+  ];
 
   const syncPrivacyPermissions = async () => {
     const [locationPermission, notificationPermission] = await Promise.all([
@@ -1269,22 +1315,22 @@ function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => v
           <View style={styles.accountModernContent}>
             <View style={styles.accountModernHero}>
               <View style={styles.accountModernHeroTop}>
-                <Text style={styles.accountModernSince}>MEMBRE DEPUIS 2021</Text>
+                <Text style={styles.accountModernSince}>MEMBRE DEPUIS {memberYear(user.memberSince)}</Text>
                 <View style={styles.accountModernTierBadge}>
-                  <Text style={styles.accountModernTierText}>HABITUÉ</Text>
+                  <Text style={styles.accountModernTierText}>{loyaltyName}</Text>
                 </View>
               </View>
-              <Text style={styles.accountModernName}>Thibaut</Text>
-              <Text style={styles.accountModernClient}>N° SLV–04287</Text>
+              <Text style={styles.accountModernName}>{user.name}</Text>
+              <Text style={styles.accountModernClient}>{user.client.code ? `N° ${user.client.code}` : `CLIENT CRM #${user.client.id}`}</Text>
               <View style={styles.accountModernProgressLabels}>
-                <Text style={styles.accountModernProgressLabel}>HABITUÉ</Text>
-                <Text style={styles.accountModernProgressValue}>42% vers HÔTE</Text>
-                <Text style={styles.accountModernProgressLabel}>HÔTE</Text>
+                <Text style={styles.accountModernProgressLabel}>{loyaltyName}</Text>
+                <Text style={styles.accountModernProgressValue}>{loyaltyPoints} POINTS</Text>
+                <Text style={styles.accountModernProgressLabel}>SUIVANT</Text>
               </View>
               <View style={styles.accountModernProgressTrack}>
-                <View style={styles.accountModernProgressFill} />
+                <View style={[styles.accountModernProgressFill, { width: `${progress}%` }]} />
               </View>
-              <Text style={styles.accountModernProgressNote}>42% vers le statut Hôte</Text>
+              <Text style={styles.accountModernProgressNote}>{progress}% vers le prochain statut</Text>
             </View>
 
             <View style={[styles.accountModernMenu, detailExpanded && styles.accountModernMenuExpanded]}>
@@ -1348,7 +1394,7 @@ function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => v
 
                     {active && section.key === 'personal' ? (
                       <View style={styles.accountPersonalList}>
-                        {accountPersonalInfo.map((item) => (
+                        {personalInfo.map((item) => (
                           <View key={item.label} style={styles.accountPersonalCard}>
                             <View style={styles.accountPersonalDot} />
                             <View style={styles.accountPersonalCopy}>
@@ -1474,6 +1520,17 @@ function AccountSheet({ visible, onClose }: { visible: boolean; onClose: () => v
                 );
               })}
             </View>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                onClose();
+                void onLogout();
+              }}
+              style={styles.accountAddPayment}
+            >
+              <MaterialIcons name="logout" size={22} color="#CFA055" />
+              <Text style={styles.accountAddPaymentText}>Se déconnecter</Text>
+            </TouchableOpacity>
           </View>
         </View>
         {paymentEntryOpen ? (
@@ -3101,7 +3158,15 @@ function ChatScreen({ notify }: { notify: (message: string, pattern?: number | n
   );
 }
 
-function AccountScreen({ notify }: { notify: (message: string, pattern?: number | number[]) => void }) {
+function AccountScreen({
+  notify,
+  user,
+  onLogout,
+}: {
+  notify: (message: string, pattern?: number | number[]) => void;
+  user: SolyUser;
+  onLogout: () => Promise<void>;
+}) {
   const scene = scenes.transactional;
 
   return (
@@ -3109,8 +3174,8 @@ function AccountScreen({ notify }: { notify: (message: string, pattern?: number 
       <SectionTitle title="Compte & Fidélité" subtitle="Profil, avantages, paiement et confidentialité." scene={scene} />
       <SurfaceCard scene={scene} style={styles.tierHero}>
         <SolyEyebrow scene={scene}>Palier actuel</SolyEyebrow>
-        <Text style={[styles.tierName, { color: scene.textPrimary }]}>Hôte</Text>
-        <Text style={[styles.cardText, { color: scene.textMuted }]}>Client SOLÝ n° 0482 · 780 points avant Ambassadeur</Text>
+        <Text style={[styles.tierName, { color: scene.textPrimary }]}>{user.loyalty?.level_name || 'Voyageur'}</Text>
+        <Text style={[styles.cardText, { color: scene.textMuted }]}>{user.client.code || `Client CRM #${user.client.id}`} · {user.loyalty?.points_24m ?? 0} points</Text>
         <View style={[styles.progressTrack, { backgroundColor: scene.bgDeep }]}>
           <View style={[styles.progressFill, { backgroundColor: scene.accentPrimary }]} />
         </View>
@@ -3131,8 +3196,27 @@ function AccountScreen({ notify }: { notify: (message: string, pattern?: number 
           </TouchableOpacity>
         ))}
       </SurfaceCard>
+      <SolyBtnDecline label="Se déconnecter" scene={scene} onPress={() => void onLogout()} />
     </View>
   );
+}
+
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || 'Client';
+}
+
+function userInitials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('') || 'S';
+}
+
+function memberYear(value: string) {
+  const year = new Date(value).getFullYear();
+  return Number.isFinite(year) ? year : new Date().getFullYear();
 }
 
 function MiniMap({

@@ -1,6 +1,6 @@
 {
   "name": "soly",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -23,6 +23,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
+    "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
