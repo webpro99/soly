@@ -65,5 +65,5 @@ export function useSolySession() {
     }
   }, [token]);
 
-  return { loading, submitting, user, bootstrap, login, register, logout };
+  return { loading, submitting, token, user, bootstrap, login, register, logout };
 }

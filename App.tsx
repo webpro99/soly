@@ -6,6 +6,7 @@ import { Marcellus_400Regular } from '@expo-google-fonts/marcellus';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAudioPlayer } from 'expo-audio';
 import * as Clipboard from 'expo-clipboard';
+import Constants from 'expo-constants';
 import { useFonts } from 'expo-font';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
@@ -46,7 +47,7 @@ import { RealMap } from './src/components/RealMap';
 import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
 import { useSolySession } from './src/hooks/useSolySession';
-import type { SolyUser } from './src/api/solyApi';
+import { loadSolyExplorer, loadSolyStay, registerSolyPushToken, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
   companions,
@@ -66,6 +67,15 @@ SplashScreen.preventAutoHideAsync();
 SplashScreen.setOptions({
   duration: 900,
   fade: true,
+});
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
 const quickModules: { key: ModuleKey; label: string; meta: string }[] = [
@@ -134,6 +144,9 @@ type ExplorerGuide = {
   note: string;
   sections: ExplorerSection[];
 };
+
+type AgendaEntry = { time: string; title: string; place: string; provider: string };
+type DynamicStayDay = { day: string; title: string; subtitle: string; items: AgendaEntry[] };
 
 const fallbackWeather: LiveWeatherState = {
   status: 'loading',
@@ -395,8 +408,12 @@ export default function App() {
   const [screen, setScreen] = useState<ModuleKey>('home');
   const [previousScreen, setPreviousScreen] = useState<ModuleKey>('home');
   const [toast, setToast] = useState('');
-  const [selectedAgenda, setSelectedAgenda] = useState<(typeof agendaDays)[number]['items'][number] | null>(null);
+  const [selectedAgenda, setSelectedAgenda] = useState<AgendaEntry | null>(null);
   const [selectedSpot, setSelectedSpot] = useState<ExplorerActivity | null>(null);
+  const [dynamicStay, setDynamicStay] = useState<SolyStay | null>(null);
+  const [dynamicExplorer, setDynamicExplorer] = useState<SolyExplorerGuide | null>(null);
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const explorerRequestKey = useRef('');
   const [selectedEmergency, setSelectedEmergency] = useState('');
   const [driverChatOpen, setDriverChatOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
@@ -415,6 +432,53 @@ export default function App() {
     const timer = setTimeout(() => setLaunchComplete(true), Platform.OS === 'web' ? 900 : 1450);
     return () => clearTimeout(timer);
   }, [fontsLoaded]);
+
+  useEffect(() => {
+    if (!session.token || !session.user) return;
+    let mounted = true;
+    loadSolyStay(session.token)
+      .then((stay) => mounted && setDynamicStay(stay?.id ? stay : null))
+      .catch(() => mounted && setDynamicStay(null));
+
+    if (Platform.OS !== 'web') {
+      (async () => {
+        const existing = await Notifications.getPermissionsAsync();
+        const permission = existing.status === 'granted' ? existing : await Notifications.requestPermissionsAsync();
+        if (permission.status !== 'granted') return;
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('soly-updates', {
+            name: 'SOLY · Séjour & conciergerie',
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 220, 120, 220],
+            lightColor: '#CFA055',
+          });
+        }
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+        if (!projectId) return;
+        const pushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+        await registerSolyPushToken(session.token!, pushToken, Platform.OS);
+      })().catch(() => undefined);
+    }
+    return () => { mounted = false; };
+  }, [session.token, session.user?.id]);
+
+  useEffect(() => {
+    if (screen !== 'explore' || !session.token || explorerLoading || dynamicExplorer) return;
+    const requestKey = `${session.user?.id || 0}|${dynamicStay?.city || liveWeather.city}`;
+    if (explorerRequestKey.current === requestKey) return;
+    explorerRequestKey.current = requestKey;
+    setExplorerLoading(true);
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+      .then((position) => loadSolyExplorer(session.token!, {
+        city: dynamicStay?.city || liveWeather.city,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }))
+      .then(setDynamicExplorer)
+      .catch(() => loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city }).then(setDynamicExplorer))
+      .catch(() => undefined)
+      .finally(() => setExplorerLoading(false));
+  }, [screen, session.token, dynamicStay?.city, liveWeather.city, dynamicExplorer, explorerLoading]);
 
   if (!fontsLoaded || !launchComplete || session.loading) {
     return <SolyLoadingScreen />;
@@ -496,7 +560,7 @@ export default function App() {
           backgroundColor={screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? '#041E0C' : scene.bg}
         />
         <ToastNotification visible={Boolean(toast)} text={toast} scene={scene} />
-        {screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' ? null : (
+        {screen === 'home' || screen === 'weather' || screen === 'stay' || screen === 'currency' || screen === 'explore' ? null : (
           <View style={styles.topChrome}>
             <View style={[styles.statusPill, { backgroundColor: 'rgba(0,0,0,0.22)', borderColor: scene.borderSoft }]}>
               <Text style={[styles.statusText, { color: scene.textSecondary }]}>{liveWeather.city}</Text>
@@ -516,7 +580,7 @@ export default function App() {
             styles.scrollContent,
             screen === 'home' && styles.homeScrollContent,
             (screen === 'weather' || screen === 'stay' || screen === 'currency') && styles.weatherScrollContent,
-            screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && styles.scrollContentWithDock,
+            screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && screen !== 'explore' && styles.scrollContentWithDock,
           ]}
           showsVerticalScrollIndicator={false}
           scrollEnabled={screen !== 'home' && screen !== 'weather' && screen !== 'currency'}
@@ -533,7 +597,7 @@ export default function App() {
               onLogout={session.logout}
             />
           ) : screen === 'stay' ? (
-            <StayScreen onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} onClose={goBack} />
+            <StayScreen stay={dynamicStay} onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} onClose={goBack} />
           ) : screen === 'butler' ? (
             <ButlerScreen notify={notify} />
           ) : screen === 'weather' ? (
@@ -541,7 +605,7 @@ export default function App() {
           ) : screen === 'companions' ? (
             <CompanionsScreen navigate={navigate} shareLocation={shareLocation} />
           ) : screen === 'explore' ? (
-            <ExploreScreen city={liveWeather.city} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
+            <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
           ) : screen === 'currency' ? (
             <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} onClose={goBack} />
           ) : screen === 'sos' ? (
@@ -559,7 +623,7 @@ export default function App() {
           )}
         </ScrollView>
 
-        {screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' ? (
+        {screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && screen !== 'explore' ? (
           <View style={[styles.bottomDock, { borderColor: scene.borderSoft, backgroundColor: scene.bgDeep }]}>
             <DockIconButton icon="arrow-back-ios-new" label="Retour" scene={scene} onPress={goBack} />
             <DockIconButton
@@ -574,7 +638,7 @@ export default function App() {
               }}
               active={screen === 'chat' || messagesOpen}
             />
-            <DockIconButton icon="notifications-active" label="Notifications" scene={scene} badge="3" onPress={() => notify('3 notifications en attente')} pulse />
+            <DockIconButton icon="notifications-active" label="Notifications" scene={scene} badge={String(dynamicStay?.notifications?.length ?? 0)} onPress={() => notify(`${dynamicStay?.notifications?.length ?? 0} notification(s) en attente`)} pulse />
             <DockIconButton icon="home" label="Accueil" scene={scene} onPress={() => navigate('home')} active />
           </View>
         ) : null}
@@ -2082,18 +2146,53 @@ function ArrivalOption({
   );
 }
 
+function normalizeStayDays(stay: SolyStay | null): DynamicStayDay[] {
+  if (!stay) return [];
+  return (stay.days || []).map((raw, dayIndex) => {
+    const day = raw as Record<string, any>;
+    const sourceItems = Array.isArray(day.items)
+      ? day.items
+      : Array.isArray(day.slots)
+        ? day.slots.flatMap((slot: any) => Array.isArray(slot?.items) ? slot.items.map((item: any) => ({ ...item, slot_label: slot.slot_label || slot.label })) : [])
+        : [];
+    const items: AgendaEntry[] = sourceItems.map((item: any) => ({
+      time: String(item.time || item.start_time || item.hour || item.slot_label || ''),
+      title: String(item.title || item.label || item.name || item.item_label || 'Étape du séjour'),
+      place: String(item.place || item.location || item.city || stay.city || ''),
+      provider: String(item.provider || item.provider_name || item.prestataire || item.description || 'SOLÝ'),
+    }));
+    const date = String(day.date || day.day_date || '');
+    return {
+      day: String(day.day_code || day.day || dayIndex + 1),
+      title: String(day.title || day.label || (date ? formatStayDate(date) : `Jour ${dayIndex + 1}`)),
+      subtitle: String(day.subtitle || day.note || day.city || stay.city || ''),
+      items,
+    };
+  });
+}
+
+function formatStayDate(value: string) {
+  if (!value) return '';
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(date);
+}
+
 function StayScreen({
+  stay,
   onSelect,
   onOpenDriverChat,
   onClose,
 }: {
-  onSelect: (item: (typeof agendaDays)[number]['items'][number]) => void;
+  stay: SolyStay | null;
+  onSelect: (item: AgendaEntry) => void;
   onOpenDriverChat: () => void;
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(0);
   const [locatorOpen, setLocatorOpen] = useState(false);
-  const visibleDays = agendaDays.slice(0, 2);
+  const visibleDays = normalizeStayDays(stay);
+  const roadbook = (stay?.roadbook || {}) as Record<string, any>;
+  const driver = roadbook.driver || roadbook.chauffeur || roadbook.transport?.driver || null;
 
   return (
     <View style={[styles.stayLayerScreen, locatorOpen && styles.stayLayerScreenExpanded]}>
@@ -2111,16 +2210,16 @@ function StayScreen({
         </View>
         <View style={styles.atmosphereRule} />
 
-        <View style={styles.stayDriverCard}>
+        {driver ? <View style={styles.stayDriverCard}>
           <View style={styles.driverArrivalBadge}>
             <View style={styles.driverArrivalBadgeDot} />
-            <Text style={styles.driverArrivalBadgeText}>DANS 45 MIN</Text>
+            <Text style={styles.driverArrivalBadgeText}>{String(driver.eta || driver.arrival || 'CHAUFFEUR')}</Text>
           </View>
           <Text style={styles.stayDriverHeadline}>
-            <Text style={styles.stayDriverName}>Youssef</Text> arrive dans 45 min
+            <Text style={styles.stayDriverName}>{String(driver.name || driver.driver_name || 'Votre chauffeur')}</Text>
           </Text>
-          <Text style={styles.stayDriverRoute}>Aéroport Menara · Porte B → Riad Yasmine · médina</Text>
-          <Text style={styles.stayDriverCar}>MERCEDES CLASSE V  ·  184  -  A  -  32</Text>
+          <Text style={styles.stayDriverRoute}>{String(driver.route || driver.pickup || '')}</Text>
+          <Text style={styles.stayDriverCar}>{String(driver.vehicle || driver.car || '')} {driver.plate ? ` · ${driver.plate}` : ''}</Text>
 
           <View style={styles.driverArrivalActions}>
             <TouchableOpacity
@@ -2140,9 +2239,9 @@ function StayScreen({
             </TouchableOpacity>
           </View>
           <StayLocatorMap visible={locatorOpen} onClose={() => setLocatorOpen(false)} />
-        </View>
+        </View> : null}
 
-        <Text style={styles.stayLayerWelcome}>Nous sommes heureux de vous accueillir du 15 au 17 mai</Text>
+        <Text style={styles.stayLayerWelcome}>{stay ? `Nous sommes heureux de vous accueillir du ${formatStayDate(stay.arrivalDate)} au ${formatStayDate(stay.departureDate)} · ${stay.city}` : 'Aucun séjour actif n’est encore disponible.'}</Text>
 
         {visibleDays.map((day, index) => (
           <View key={day.day} style={styles.stayDayCard}>
@@ -2155,32 +2254,24 @@ function StayScreen({
             style={styles.stayDayHead}
           >
             <View style={styles.stayDayCopy}>
-              <Text style={styles.stayDayTitle}>{index === 0 ? 'Vendredi 15 mai' : 'Samedi 16 mai'}</Text>
-              <Text numberOfLines={1} style={styles.stayDaySubtitle}>{index === 0 ? "Aujourd’hui · Vos premiers instants à Marrakech" : 'Médina & culture'}</Text>
+              <Text style={styles.stayDayTitle}>{day.title}</Text>
+              <Text numberOfLines={1} style={styles.stayDaySubtitle}>{day.subtitle}</Text>
             </View>
             <View style={styles.stayDayBadge}>
-              <Text style={styles.stayDayBadgeText}>{index === 0 ? '6' : '3'}</Text>
+              <Text style={styles.stayDayBadgeText}>{day.items.length}</Text>
             </View>
             <MaterialIcons name={open === index ? 'arrow-drop-up' : 'arrow-drop-down'} size={20} color="#CFA055" />
           </TouchableOpacity>
           {open === index ? (
             <View style={styles.stayEventList}>
-              {day.items.slice(0, 2).map((item, itemIndex) => (
+              {day.items.map((item) => (
                 <TouchableOpacity key={`${item.time}-${item.title}`} activeOpacity={0.76} onPress={() => onSelect(item)} style={styles.stayEventCard}>
                   <View style={styles.stayEventCopy}>
-                    <Text style={styles.stayEventTitle}>{itemIndex === 0 && index === 0 ? 'Arrivée à Marrakech' : item.title}</Text>
+                    <Text style={styles.stayEventTitle}>{item.title}</Text>
                     <Text style={styles.stayEventPlace}>{item.place}</Text>
-                    {itemIndex === 0 && index === 0 ? (
-                      <>
-                        <Text style={styles.stayEventDetail}>Vol AT1196</Text>
-                        <Text style={styles.stayEventAccent}>CHAUFFEUR · YOUSSEF</Text>
-                        <Text style={styles.stayEventAccent}>MATRICULE · 184 - A - 32</Text>
-                      </>
-                    ) : (
-                      <Text style={styles.stayEventDetail}>{item.provider}</Text>
-                    )}
+                    <Text style={styles.stayEventDetail}>{item.provider}</Text>
                   </View>
-                  <Text style={styles.stayEventTime}>{itemIndex === 0 ? '06:00 – 07:00' : '07:30 – 08:30'}</Text>
+                  <Text style={styles.stayEventTime}>{item.time}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -2661,31 +2752,38 @@ function CompanionsScreen({
 
 function ExploreScreen({
   city,
+  guide: dynamicGuide,
+  loading,
+  onClose,
   onSelect,
   notify,
   shareLocation,
 }: {
   city: string;
+  guide: SolyExplorerGuide | null;
+  loading: boolean;
+  onClose: () => void;
   onSelect: (spot: ExplorerActivity) => void;
   notify: (message: string, pattern?: number | number[]) => void;
   shareLocation: (recipient: 'chauffeur' | 'groupe') => void;
 }) {
   const scene = scenes.editorial;
-  const guide = explorerGuideForCity(city);
+  const guide = (dynamicGuide as ExplorerGuide | null) || explorerGuideForCity(city);
   const [openSection, setOpenSection] = useState(guide.sections[0]?.title ?? '');
   const activityMarkers = guide.sections.flatMap((section) => section.activities);
 
   return (
-    <View style={[styles.screen, styles.explorerScreen]}>
-      <View style={styles.explorerHeader}>
-        <View style={[styles.explorerHeaderIcon, { borderColor: scene.border }]}>
-          <Text style={[styles.explorerHeaderIconText, { color: scene.accentPrimary }]}>◇</Text>
-        </View>
-        <View style={styles.explorerHeaderCopy}>
-          <Text style={[styles.explorerTitle, { color: scene.accentPrimary }]}>Explorer</Text>
-          <Text style={[styles.explorerSubtitle, { color: scene.textSecondary }]}>LA VILLE À VOTRE MAIN · {guide.city.toUpperCase()}</Text>
-        </View>
+    <View style={[styles.screen, styles.explorerScreen, styles.explorerSheetScreen]}>
+      <View style={styles.explorerSheetHandle} />
+      <View style={styles.explorerSheetTitleRow}>
+        <Text style={styles.explorerSheetTitle}>Explorer</Text>
+        <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.explorerSheetClose}>
+          <MaterialIcons name="close" size={24} color="#AAB7AE" />
+        </TouchableOpacity>
       </View>
+      <View style={styles.explorerSheetRule} />
+
+      {loading ? <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text> : null}
 
       <MiniMap dark withCompanions city={guide.city} markers={activityMarkers} />
 
@@ -6599,6 +6697,54 @@ const styles = StyleSheet.create({
   },
   explorerScreen: {
     gap: 18,
+  },
+  explorerSheetScreen: {
+    marginTop: 10,
+    paddingTop: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: '#164C37',
+  },
+  explorerSheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: '#EEE8D8',
+    alignSelf: 'center',
+    marginBottom: 18,
+  },
+  explorerSheetTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+  },
+  explorerSheetTitle: {
+    color: '#F3EBDD',
+    fontFamily: type.serif,
+    fontSize: 28,
+  },
+  explorerSheetClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,.1)',
+  },
+  explorerSheetRule: {
+    height: 1,
+    marginTop: 12,
+    backgroundColor: 'rgba(207,160,85,.18)',
+  },
+  explorerAiLoading: {
+    color: '#D2B15B',
+    fontFamily: type.body,
+    fontSize: 11,
+    letterSpacing: 1,
+    textAlign: 'center',
   },
   explorerHeader: {
     minHeight: 58,

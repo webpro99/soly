@@ -43,6 +43,43 @@ export type SolyBootstrap = {
   updatedAt: string;
 };
 
+export type SolyStay = {
+  id: number;
+  code: string;
+  status: string;
+  city: string;
+  arrivalDate: string;
+  departureDate: string;
+  guests: number;
+  totalAmount: number;
+  days: Array<Record<string, unknown>>;
+  roadbook: Record<string, unknown>;
+  notifications: Array<{ id: number; title: string; status: string; priority: string; created_at: string }>;
+  updatedAt: string;
+};
+
+export type SolyExplorerGuide = {
+  district: string;
+  city: string;
+  note: string;
+  companions?: Array<Record<string, unknown>>;
+  sections: Array<{
+    title: string;
+    subtitle: string;
+    activities: Array<{
+      title: string;
+      category: string;
+      description: string;
+      distance: string;
+      eta: string;
+      latitude: number;
+      longitude: number;
+    }>;
+  }>;
+  generatedAt?: string;
+  source?: string;
+};
+
 type AuthResponse = { token: string; user: SolyUser };
 
 async function storageGet(): Promise<string | null> {
@@ -127,4 +164,20 @@ export async function logoutSoly(token: string | null): Promise<void> {
 
 export function loadSolyBootstrap(): Promise<SolyBootstrap> {
   return apiRequest<SolyBootstrap>('/bootstrap');
+}
+
+export function loadSolyStay(token: string): Promise<SolyStay> {
+  return apiRequest<SolyStay>('/stay', {}, token);
+}
+
+export function loadSolyExplorer(token: string, input: { city?: string; latitude?: number; longitude?: number }): Promise<SolyExplorerGuide> {
+  const query = new URLSearchParams();
+  if (input.city) query.set('city', input.city);
+  if (input.latitude) query.set('latitude', String(input.latitude));
+  if (input.longitude) query.set('longitude', String(input.longitude));
+  return apiRequest<SolyExplorerGuide>(`/explorer?${query.toString()}`, {}, token);
+}
+
+export function registerSolyPushToken(token: string, pushToken: string, platform: string): Promise<{ registered: boolean }> {
+  return apiRequest('/push/register', { method: 'POST', body: JSON.stringify({ token: pushToken, platform }) }, token);
 }
