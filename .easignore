@@ -2,3 +2,12 @@ builds/
 .expo/
 *.log
 expo-start.log
+node_modules/
+.git/
+dist/
+web-build/
+.kotlin/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
