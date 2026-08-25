@@ -2,9 +2,9 @@
   "expo": {
     "name": "SOLY",
     "slug": "soly",
-    "version": "1.0.19",
+    "version": "1.0.20",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon-bell.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -17,9 +17,9 @@
     },
     "android": {
       "package": "com.soly.app",
-      "versionCode": 21,
+      "versionCode": 22,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon-bell.png",
         "backgroundColor": "#134F32"
       },
       "edgeToEdgeEnabled": false,

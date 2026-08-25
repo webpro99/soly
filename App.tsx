@@ -579,7 +579,7 @@ export default function App() {
           contentContainerStyle={[
             styles.scrollContent,
             screen === 'home' && styles.homeScrollContent,
-            (screen === 'weather' || screen === 'stay' || screen === 'currency') && styles.weatherScrollContent,
+            (screen === 'weather' || screen === 'stay' || screen === 'currency' || screen === 'explore') && styles.weatherScrollContent,
             screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && screen !== 'explore' && styles.scrollContentWithDock,
           ]}
           showsVerticalScrollIndicator={false}
@@ -2150,10 +2150,11 @@ function normalizeStayDays(stay: SolyStay | null): DynamicStayDay[] {
   if (!stay) return [];
   return (stay.days || []).map((raw, dayIndex) => {
     const day = raw as Record<string, any>;
+    const slotValues = day.slots && typeof day.slots === 'object' ? Object.values(day.slots) : [];
     const sourceItems = Array.isArray(day.items)
       ? day.items
-      : Array.isArray(day.slots)
-        ? day.slots.flatMap((slot: any) => Array.isArray(slot?.items) ? slot.items.map((item: any) => ({ ...item, slot_label: slot.slot_label || slot.label })) : [])
+      : slotValues.length
+        ? slotValues.flatMap((slot: any) => Array.isArray(slot?.items) ? slot.items.map((item: any) => ({ ...item, slot_label: slot.slot_label || slot.label })) : [])
         : [];
     const items: AgendaEntry[] = sourceItems.map((item: any) => ({
       time: String(item.time || item.start_time || item.hour || item.slot_label || ''),
@@ -2164,7 +2165,7 @@ function normalizeStayDays(stay: SolyStay | null): DynamicStayDay[] {
     const date = String(day.date || day.day_date || '');
     return {
       day: String(day.day_code || day.day || dayIndex + 1),
-      title: String(day.title || day.label || (date ? formatStayDate(date) : `Jour ${dayIndex + 1}`)),
+      title: String(day.title || day.label || (date ? formatStayDate(date) : `Jour ${day.day_number || dayIndex + 1}`)),
       subtitle: String(day.subtitle || day.note || day.city || stay.city || ''),
       items,
     };
@@ -2773,7 +2774,11 @@ function ExploreScreen({
   const activityMarkers = guide.sections.flatMap((section) => section.activities);
 
   return (
-    <View style={[styles.screen, styles.explorerScreen, styles.explorerSheetScreen]}>
+    <View style={styles.stayLayerScreen}>
+      <View style={styles.stayLayerTop}>
+        <Image source={solyResting} resizeMode="contain" style={styles.stayMascotPeek} />
+      </View>
+      <View style={[styles.stayLayerSheet, styles.explorerScreen, styles.explorerSheetScreen]}>
       <View style={styles.explorerSheetHandle} />
       <View style={styles.explorerSheetTitleRow}>
         <Text style={styles.explorerSheetTitle}>Explorer</Text>
@@ -2858,6 +2863,7 @@ function ExploreScreen({
         <TouchableOpacity activeOpacity={0.78} onPress={() => shareLocation('chauffeur')} style={[styles.shareButtonPrimary, { backgroundColor: scene.accentPrimary }]}>
           <Text style={[styles.shareButtonPrimaryText, { color: scene.bgDeep }]}>Au chauffeur</Text>
         </TouchableOpacity>
+      </View>
       </View>
     </View>
   );
