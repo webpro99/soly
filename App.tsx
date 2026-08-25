@@ -2779,38 +2779,38 @@ function ExploreScreen({
         <Image source={solyResting} resizeMode="contain" style={styles.stayMascotPeek} />
       </View>
       <View style={[styles.stayLayerSheet, styles.explorerScreen, styles.explorerSheetScreen]}>
-      <View style={styles.explorerSheetHandle} />
-      <View style={styles.explorerSheetTitleRow}>
-        <Text style={styles.explorerSheetTitle}>Explorer</Text>
-        <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.explorerSheetClose}>
-          <MaterialIcons name="close" size={24} color="#AAB7AE" />
+      <View style={[styles.atmosphereHandle, styles.stayLayerHandle]} />
+      <View style={styles.atmosphereTitleRow}>
+        <Text style={styles.atmosphereTitle}>Explorer</Text>
+        <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.atmosphereClose}>
+          <MaterialIcons name="close" size={23} color="#A6B0A5" />
         </TouchableOpacity>
       </View>
-      <View style={styles.explorerSheetRule} />
+      <View style={styles.atmosphereRule} />
 
       {loading ? <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text> : null}
 
       <MiniMap dark withCompanions city={guide.city} markers={activityMarkers} />
 
-      <Text style={[styles.explorerIntro, { color: scene.textSecondary }]}>
-        Vous êtes dans la <Text style={{ color: scene.accentPrimary }}>{guide.district}</Text>. {guide.note}
+      <Text style={styles.explorerIntro}>
+        Vous êtes dans la <Text style={styles.explorerAccentText}>{guide.district}</Text>. {guide.note}
       </Text>
 
       <View style={styles.explorerBlock}>
-        <Text style={[styles.explorerBlockLabel, { color: scene.accentPrimary }]}>VOS PROCHES DISPONIBLES · EN DIRECT</Text>
+        <Text style={styles.explorerBlockLabel}>VOS PROCHES DISPONIBLES · EN DIRECT</Text>
         <View style={styles.explorerCompanionGrid}>
           {explorerCompanions.map((person) => (
             <TouchableOpacity
               key={person.name}
               activeOpacity={0.78}
               onPress={() => notify(`${person.name} est ${person.distance}`)}
-              style={[styles.explorerCompanionCard, { borderColor: scene.border, backgroundColor: scene.surface }]}
+              style={styles.explorerCompanionCard}
             >
               <View style={[styles.explorerLiveDot, { backgroundColor: person.status === 'online' ? '#D9E5B7' : '#9AC2C8' }]} />
               <View style={styles.explorerCompanionCopy}>
-                <Text style={[styles.explorerCompanionName, { color: scene.textPrimary }]}>{person.name}</Text>
-                <Text style={[styles.explorerCompanionDistance, { color: scene.accentPrimary }]}>{person.distance}</Text>
-                <Text style={[styles.explorerCompanionPlace, { color: scene.textSecondary }]}>{person.place}</Text>
+                <Text style={styles.explorerCompanionName}>{person.name}</Text>
+                <Text style={styles.explorerCompanionDistance}>{person.distance}</Text>
+                <Text style={styles.explorerCompanionPlace}>{person.place}</Text>
               </View>
             </TouchableOpacity>
           ))}
@@ -2821,17 +2821,16 @@ function ExploreScreen({
         const isOpen = openSection === section.title;
 
         return (
-          <View key={section.title} style={[styles.explorerSection, { borderColor: scene.border, backgroundColor: scene.surface }]}>
+          <View key={section.title} style={styles.stayDayCard}>
             <TouchableOpacity activeOpacity={0.78} onPress={() => setOpenSection(isOpen ? '' : section.title)} style={styles.explorerSectionHeader}>
-              <View style={[styles.explorerSectionBullet, { backgroundColor: scene.accentPrimary }]} />
               <View style={styles.explorerSectionCopy}>
-                <Text style={[styles.explorerSectionTitle, { color: scene.textPrimary }]}>{section.title}</Text>
-                <Text style={[styles.explorerSectionSubtitle, { color: scene.accentPrimary }]}>{section.subtitle}</Text>
+                <Text style={styles.explorerSectionTitle}>{section.title}</Text>
+                <Text style={styles.explorerSectionSubtitle}>{section.subtitle}</Text>
               </View>
-              <View style={styles.explorerCountPill}>
-                <Text style={[styles.explorerCountText, { color: scene.textSecondary }]}>{section.activities.length}</Text>
+              <View style={styles.stayDayBadge}>
+                <Text style={styles.stayDayBadgeText}>{section.activities.length}</Text>
               </View>
-              <Text style={[styles.explorerChevron, { color: scene.accentPrimary }]}>{isOpen ? '⌃' : '⌄'}</Text>
+              <MaterialIcons name={isOpen ? 'arrow-drop-up' : 'arrow-drop-down'} size={20} color="#CFA055" />
             </TouchableOpacity>
 
             {isOpen ? (
@@ -2841,14 +2840,13 @@ function ExploreScreen({
                     key={activity.title}
                     activeOpacity={0.78}
                     onPress={() => onSelect(activity)}
-                    style={[styles.explorerActivityCard, { borderColor: scene.borderSoft, backgroundColor: scene.surfaceRaised }]}
+                    style={styles.explorerActivityCard}
                   >
-                    <View style={[styles.explorerActivityDot, { backgroundColor: scene.accentPrimary }]} />
                     <View style={styles.explorerActivityCopy}>
-                      <Text style={[styles.explorerActivityTitle, { color: scene.textPrimary }]}>{activity.title}</Text>
-                      <Text style={[styles.explorerActivityDescription, { color: scene.textSecondary }]}>{activity.description}</Text>
+                      <Text style={styles.explorerActivityTitle}>{activity.title}</Text>
+                      <Text style={styles.explorerActivityDescription}>{activity.description}</Text>
                     </View>
-                    <Text style={[styles.explorerActivityDistance, { color: scene.accentPrimary }]}>{activity.distance}</Text>
+                    <Text style={styles.explorerActivityDistance}>{activity.distance}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -6786,17 +6784,22 @@ const styles = StyleSheet.create({
     letterSpacing: 1.6,
   },
   explorerIntro: {
-    fontFamily: type.bodyMedium,
-    fontSize: 14,
-    lineHeight: 23,
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#F0ECE3',
+  },
+  explorerAccentText: {
+    color: '#CFA055',
   },
   explorerBlock: {
     gap: 12,
   },
   explorerBlockLabel: {
-    fontFamily: type.bodyBold,
+    fontFamily: type.bodyMedium,
     fontSize: 10,
     letterSpacing: 4,
+    color: '#CFA055',
   },
   explorerCompanionGrid: {
     flexDirection: 'row',
@@ -6810,6 +6813,8 @@ const styles = StyleSheet.create({
     minHeight: 74,
     borderRadius: 10,
     borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#173824',
     paddingHorizontal: 12,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -6830,19 +6835,22 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   explorerCompanionName: {
-    fontFamily: type.bodyBold,
+    fontFamily: type.bodyMedium,
     fontSize: 13,
     lineHeight: 17,
+    color: '#F2EEE4',
   },
   explorerCompanionDistance: {
-    fontFamily: type.serif,
+    fontFamily: 'EBGaramond_400Regular_Italic',
     fontSize: 13,
     lineHeight: 16,
+    color: '#CFA055',
   },
   explorerCompanionPlace: {
-    fontFamily: type.bodyMedium,
+    fontFamily: type.body,
     fontSize: 11,
     lineHeight: 15,
+    color: '#B0BCB3',
   },
   explorerSection: {
     borderRadius: 14,
@@ -6851,7 +6859,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   explorerSectionHeader: {
-    minHeight: 36,
+    minHeight: 43,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -6866,14 +6874,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   explorerSectionTitle: {
-    fontFamily: type.bodyBold,
-    fontSize: 15,
-    lineHeight: 19,
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 19,
+    lineHeight: 22,
+    color: '#F1EEE6',
   },
   explorerSectionSubtitle: {
-    fontFamily: type.bodyBold,
-    fontSize: 10,
-    lineHeight: 14,
+    fontFamily: type.body,
+    fontSize: 9,
+    lineHeight: 13,
+    color: '#9EADA3',
   },
   explorerCountPill: {
     minWidth: 26,
@@ -6894,14 +6904,17 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   explorerActivityList: {
-    gap: 10,
+    gap: 8,
+    marginTop: 9,
   },
   explorerActivityCard: {
-    minHeight: 86,
-    borderRadius: 12,
+    minHeight: 61,
+    borderRadius: 10,
     borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#173824',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -6917,22 +6930,25 @@ const styles = StyleSheet.create({
   explorerActivityCopy: {
     flex: 1,
     minWidth: 0,
-    gap: 5,
+    gap: 2,
   },
   explorerActivityTitle: {
-    fontFamily: type.bodyBold,
-    fontSize: 14,
-    lineHeight: 18,
+    fontFamily: type.bodyMedium,
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#F2EEE4',
   },
   explorerActivityDescription: {
-    fontFamily: type.bodyMedium,
-    fontSize: 11.5,
-    lineHeight: 16,
+    fontFamily: type.body,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#B0BCB3',
   },
   explorerActivityDistance: {
-    fontFamily: type.serif,
-    fontSize: 18,
-    lineHeight: 22,
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 13,
+    lineHeight: 16,
+    color: '#CFA055',
   },
   explorerSheetDescription: {
     fontFamily: type.bodyMedium,
