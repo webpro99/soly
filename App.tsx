@@ -92,7 +92,20 @@ const homeModules: { key: ModuleKey; label: string; kicker: string; icon: React.
   { key: 'weather', label: 'Atmosphère', kicker: "Marrakech aujourd'hui", icon: 'light-mode' },
   { key: 'explore', label: 'Explorer', kicker: 'la ville à votre main', icon: 'search' },
   { key: 'currency', label: 'Devises', kicker: "d'un simple regard", icon: 'payments' },
-  { key: 'sos', label: 'SOS', kicker: 'assistance immédiate', icon: 'sos' },
+];
+
+const embassyContacts = [
+  { country: 'Allemagne', number: '+212537218600', display: '+212 537 21 86 00' },
+  { country: 'Belgique', number: '+212537268060', display: '+212 537 26 80 60' },
+  { country: 'Canada', number: '+212537544949', display: '+212 537 54 49 49' },
+  { country: 'Espagne', number: '+212537633900', display: '+212 537 63 39 00' },
+  { country: 'États-Unis', number: '+212537637200', display: '+212 537 63 72 00' },
+  { country: 'France', number: '+212537689700', display: '+212 537 68 97 00' },
+  { country: 'Italie', number: '+212537219730', display: '+212 537 21 97 30' },
+  { country: 'Pays-Bas', number: '+212537219600', display: '+212 537 21 96 00' },
+  { country: 'Portugal', number: '+212537756446', display: '+212 537 75 64 46' },
+  { country: 'Royaume-Uni', number: '+212537633333', display: '+212 537 63 33 33' },
+  { country: 'Suisse', number: '+212537268030', display: '+212 537 26 80 30' },
 ];
 
 type ArrivalMode = 'flight' | 'train' | 'car';
@@ -843,7 +856,6 @@ function HomeScreen({
           <View key={row.map((item) => item.key).join('-')} style={styles.homeModuleRow}>
             {row.map((item) => {
               const isButlerTile = item.key === 'butler';
-              const isSosTile = item.key === 'sos';
               const isLocked = false;
 
               return (
@@ -857,26 +869,20 @@ function HomeScreen({
                       setSolyRequestOpen(true);
                       return;
                     }
-                    if (isSosTile) {
-                      Vibration.vibrate(8);
-                      setHomeEmergencyOpen(true);
-                      return;
-                    }
-
                     navigate(item.key, 8);
                   }}
                   style={[
                     styles.homeModuleTile,
                     {
-                      backgroundColor: isSosTile ? 'rgba(117,25,27,0.18)' : '#062610',
-                      borderColor: isSosTile ? 'rgba(230,45,49,0.42)' : '#173A1E',
+                      backgroundColor: '#062610',
+                      borderColor: '#173A1E',
                     },
                     isLocked && styles.homeModuleTileLocked,
                   ]}
                 >
-                  <MaterialIcons name={item.icon} size={21} color={isSosTile ? '#E62D31' : '#CFA055'} style={styles.homeModuleIcon} />
+                  <MaterialIcons name={item.icon} size={21} color="#CFA055" style={styles.homeModuleIcon} />
                   <View style={styles.homeTileCopy}>
-                    <Text style={[styles.homeModuleLabel, { color: isSosTile ? '#F05B5E' : scene.textPrimary }]}>{item.label}</Text>
+                    <Text style={[styles.homeModuleLabel, { color: scene.textPrimary }]}>{item.label}</Text>
                     <Text style={[styles.homeModuleKicker, { color: scene.textMuted }]}>{item.kicker}</Text>
                   </View>
                 </TouchableOpacity>
@@ -884,6 +890,24 @@ function HomeScreen({
             })}
           </View>
         ))}
+      </View>
+
+      <View style={styles.homeSosRail}>
+        <View style={styles.homeSosLine} />
+        <TouchableOpacity
+          accessibilityLabel="Ouvrir les numéros d’urgence"
+          accessibilityRole="button"
+          activeOpacity={0.72}
+          onPress={() => {
+            Vibration.vibrate(8);
+            setHomeEmergencyOpen(true);
+          }}
+          style={styles.homeSosButton}
+        >
+          <MaterialIcons name="phone-in-talk" size={20} color="#C7655B" />
+          <Text style={styles.homeSosText}>SOS</Text>
+        </TouchableOpacity>
+        <View style={styles.homeSosLine} />
       </View>
 
       <HomeEmergencySheet
@@ -931,6 +955,7 @@ function HomeEmergencySheet({
   notify: (message: string, pattern?: number | number[]) => void;
 }) {
   const [pendingCall, setPendingCall] = useState<{ label: string; number: string } | null>(null);
+  const [embassiesOpen, setEmbassiesOpen] = useState(false);
 
   if (!visible) return null;
 
@@ -939,6 +964,7 @@ function HomeEmergencySheet({
     { label: 'Police', detail: 'Zones urbaines - dispatch securite', number: '19', tone: '#C95A48' },
     { label: 'Gendarmerie', detail: 'Zones rurales & autoroutes', number: '177', tone: '#CFA055' },
     { label: 'SOS Medecins - Marrakech', detail: 'Medecin a domicile 24/7', number: '0524404040', display: '0524 40 40 40', tone: '#CFA055' },
+    { label: 'Police touristique - Marrakech', detail: 'Brigade touristique - place Jemaa el-Fna - 24/7', number: '0524384601', display: '0524 38 46 01', tone: '#C95A48' },
   ];
   const openDialer = async () => {
     if (!pendingCall) return;
@@ -988,41 +1014,83 @@ function HomeEmergencySheet({
           </View>
           <View style={styles.atmosphereRule} />
 
-          <View style={styles.urgentIntroCard}>
-            <Text style={styles.urgentIntroText}>
-              En cas d’urgence, SOLÝ vous met en relation immédiate. Un appel n’est lancé qu’après confirmation — aucun déclenchement accidentel.
-            </Text>
-            <TouchableOpacity
-              activeOpacity={0.78}
-              onPress={() => setPendingCall({ label: "Cellule d’urgence", number: '112' })}
-              style={styles.urgentPrimaryCall}
-            >
-              <MaterialIcons name="phone-in-talk" size={22} color="#F6F0E8" />
-              <View>
-                <Text style={styles.urgentPrimaryTitle}>Appeler la cellule d’urgence</Text>
-                <Text style={styles.urgentPrimaryMeta}>112 · connecté au service le plus proche</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.urgentNumbersCard}>
-            <Text style={styles.urgentNumbersTitle}>Numéros directs · Maroc</Text>
-            {directNumbers.map((item) => (
+          <ScrollView
+            style={styles.urgentScroll}
+            contentContainerStyle={styles.urgentScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.urgentIntroCard}>
+              <Text style={styles.urgentIntroText}>
+                En cas d’urgence, SOLÝ vous met en relation immédiate. Un appel n’est lancé qu’après confirmation — aucun déclenchement accidentel.
+              </Text>
               <TouchableOpacity
-                key={item.label}
-                activeOpacity={0.76}
-                onPress={() => setPendingCall({ label: item.label, number: item.number })}
-                style={[styles.urgentNumberRow, { borderColor: item.tone }]}
+                activeOpacity={0.78}
+                onPress={() => setPendingCall({ label: "Cellule d’urgence", number: '112' })}
+                style={styles.urgentPrimaryCall}
               >
-                <View style={[styles.homeEmergencyDot, { backgroundColor: item.tone }]} />
-                <View style={styles.homeEmergencyRowCopy}>
-                  <Text style={styles.urgentNumberLabel}>{item.label.replace('Medical', 'Médical').replace('Medecins', 'Médecins')}</Text>
-                  <Text style={styles.urgentNumberDetail}>{item.detail.replace('medicaux', 'médicaux').replace('securite', 'sécurité').replace('domicile', 'domicile')}</Text>
+                <MaterialIcons name="phone-in-talk" size={22} color="#F6F0E8" />
+                <View>
+                  <Text style={styles.urgentPrimaryTitle}>Appeler la cellule d’urgence</Text>
+                  <Text style={styles.urgentPrimaryMeta}>112 · connecté au service le plus proche</Text>
                 </View>
-                <Text style={styles.urgentNumberValue}>{item.display ?? item.number}</Text>
               </TouchableOpacity>
-            ))}
-          </View>
+            </View>
+
+            <View style={styles.urgentNumbersCard}>
+              <Text style={styles.urgentNumbersTitle}>Numéros directs · Maroc</Text>
+              {directNumbers.map((item) => (
+                <TouchableOpacity
+                  key={item.label}
+                  activeOpacity={0.76}
+                  onPress={() => setPendingCall({ label: item.label, number: item.number })}
+                  style={[styles.urgentNumberRow, { borderColor: item.tone }]}
+                >
+                  <View style={[styles.homeEmergencyDot, { backgroundColor: item.tone }]} />
+                  <View style={styles.homeEmergencyRowCopy}>
+                    <Text style={styles.urgentNumberLabel}>{item.label.replace('Medical', 'Médical').replace('Medecins', 'Médecins')}</Text>
+                    <Text style={styles.urgentNumberDetail}>{item.detail.replace('medicaux', 'médicaux').replace('securite', 'sécurité').replace('domicile', 'domicile')}</Text>
+                  </View>
+                  <Text style={styles.urgentNumberValue}>{item.display ?? item.number}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.urgentEmbassyCard}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityState={{ expanded: embassiesOpen }}
+                activeOpacity={0.74}
+                onPress={() => setEmbassiesOpen((current) => !current)}
+                style={styles.urgentEmbassyToggle}
+              >
+                <View style={styles.urgentEmbassyToggleCopy}>
+                  <Text style={styles.urgentEmbassyTitle}>Ambassades au Maroc</Text>
+                  <Text style={styles.urgentEmbassySubtitle}>Rabat · choisir votre pays</Text>
+                </View>
+                <MaterialIcons name={embassiesOpen ? 'expand-less' : 'expand-more'} size={23} color="#CFA055" />
+              </TouchableOpacity>
+
+              {embassiesOpen ? (
+                <View style={styles.urgentEmbassyList}>
+                  {embassyContacts.map((embassy) => (
+                    <TouchableOpacity
+                      key={embassy.country}
+                      activeOpacity={0.74}
+                      onPress={() => setPendingCall({ label: `Ambassade · ${embassy.country}`, number: embassy.number })}
+                      style={styles.urgentEmbassyRow}
+                    >
+                      <View style={styles.urgentEmbassyRowCopy}>
+                        <Text style={styles.urgentEmbassyCountry}>{embassy.country}</Text>
+                        <Text style={styles.urgentEmbassyMeta}>Standard de la chancellerie</Text>
+                      </View>
+                      <Text style={styles.urgentEmbassyPhone}>{embassy.display}</Text>
+                      <MaterialIcons name="phone" size={16} color="#CFA055" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          </ScrollView>
         </View>
 
         {pendingCall ? (
@@ -4049,21 +4117,35 @@ const styles = StyleSheet.create({
     lineHeight: 23,
   },
   homeSosButton: {
-    width: 58,
-    height: 30,
-    borderRadius: 16,
-    borderWidth: 0,
-    backgroundColor: '#E62D31',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(199,101,91,0.48)',
+    backgroundColor: 'rgba(154,61,50,0.07)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 26,
-    marginBottom: 4,
   },
   homeSosText: {
-    fontFamily: type.bodyBold,
-    fontSize: 9.5,
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
     letterSpacing: 2.5,
-    color: '#FFFFFF',
+    color: '#C7655B',
+    marginTop: 1,
+  },
+  homeSosRail: {
+    width: 142,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    marginTop: 11,
+    marginBottom: 4,
+  },
+  homeSosLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(199,101,91,0.22)',
   },
   urgentSafeArea: {
     flex: 1,
@@ -4093,6 +4175,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 21,
     paddingTop: 8,
     paddingBottom: 14,
+  },
+  urgentScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  urgentScrollContent: {
+    paddingBottom: 16,
   },
   urgentIntroCard: {
     borderRadius: 14,
@@ -4131,8 +4220,6 @@ const styles = StyleSheet.create({
     color: '#E7CDC8',
   },
   urgentNumbersCard: {
-    flex: 1,
-    minHeight: 0,
     borderRadius: 14,
     backgroundColor: '#0A2C1B',
     paddingHorizontal: 20,
@@ -4148,9 +4235,7 @@ const styles = StyleSheet.create({
     marginBottom: 11,
   },
   urgentNumberRow: {
-    flex: 1,
     minHeight: 52,
-    maxHeight: 63,
     borderRadius: 11,
     borderWidth: 1,
     paddingHorizontal: 12,
@@ -4176,6 +4261,71 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#F1EEE7',
     textAlign: 'right',
+  },
+  urgentEmbassyCard: {
+    borderRadius: 14,
+    backgroundColor: '#0A2C1B',
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    marginTop: 18,
+  },
+  urgentEmbassyToggle: {
+    minHeight: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  urgentEmbassyToggleCopy: {
+    flex: 1,
+  },
+  urgentEmbassyTitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#CFA055',
+  },
+  urgentEmbassySubtitle: {
+    fontFamily: type.body,
+    fontSize: 8.5,
+    lineHeight: 12,
+    color: '#A8B5AC',
+    marginTop: 2,
+  },
+  urgentEmbassyList: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(207,160,85,0.16)',
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  urgentEmbassyRow: {
+    minHeight: 53,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(207,160,85,0.10)',
+  },
+  urgentEmbassyRowCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  urgentEmbassyCountry: {
+    fontFamily: type.bodyMedium,
+    fontSize: 10.5,
+    lineHeight: 14,
+    color: '#F1EEE7',
+  },
+  urgentEmbassyMeta: {
+    fontFamily: type.body,
+    fontSize: 7.5,
+    lineHeight: 10,
+    color: '#A8B5AC',
+  },
+  urgentEmbassyPhone: {
+    fontFamily: type.body,
+    fontSize: 8.5,
+    color: '#F1EEE7',
   },
   urgentConfirmOverlay: {
     ...StyleSheet.absoluteFillObject,
