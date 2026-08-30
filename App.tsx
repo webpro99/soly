@@ -47,7 +47,7 @@ import { RealMap } from './src/components/RealMap';
 import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
 import { useSolySession } from './src/hooks/useSolySession';
-import { loadSolyExplorer, loadSolyStay, registerSolyPushToken, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
+import { createSolyConciergeRequest, loadSolyExplorer, loadSolyStay, registerSolyPushToken, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
   companions,
@@ -606,7 +606,9 @@ export default function App() {
               weather={liveWeather}
               awake={solyAwake}
               onWake={() => setSolyAwake(true)}
+              token={session.token!}
               user={session.user}
+              stay={dynamicStay}
               onLogout={session.logout}
             />
           ) : screen === 'stay' ? (
@@ -772,7 +774,9 @@ function HomeScreen({
   weather,
   awake,
   onWake,
+  token,
   user,
+  stay,
   onLogout,
 }: {
   navigate: (screen: ModuleKey, vibration?: number) => void;
@@ -780,7 +784,9 @@ function HomeScreen({
   weather: LiveWeatherState;
   awake: boolean;
   onWake: () => void;
+  token: string;
   user: SolyUser;
+  stay: SolyStay | null;
   onLogout: () => Promise<void>;
 }) {
   const scene = scenes.immersive;
@@ -932,6 +938,9 @@ function HomeScreen({
       />
       <SolyRequestSheet
         visible={solyRequestOpen}
+        token={token}
+        user={user}
+        stay={stay}
         onClose={() => setSolyRequestOpen(false)}
         onRing={() => {
           wakeSoly();
@@ -1123,10 +1132,16 @@ function HomeEmergencySectionLabel({ label }: { label: string }) {
 
 function SolyRequestSheet({
   visible,
+  token,
+  user,
+  stay,
   onClose,
   onRing,
 }: {
   visible: boolean;
+  token: string;
+  user: SolyUser;
+  stay: SolyStay | null;
   onClose: () => void;
   onRing: () => void;
 }) {
@@ -1136,8 +1151,10 @@ function SolyRequestSheet({
   const [selectedSlot, setSelectedSlot] = useState('now');
   const [mode, setMode] = useState<'request' | 'chat'>('request');
   const [chatDraft, setChatDraft] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [requestFeedback, setRequestFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [chatMessages, setChatMessages] = useState([
-    { id: 'soly-1', from: 'soly', text: 'Je suis à votre service, Thibaut. Je traite votre demande.', time: 'Aujourd’hui · 19h42' },
+    { id: 'soly-1', from: 'soly', text: `Je suis à votre service, ${firstName(user.name)}. Je traite votre demande.`, time: 'Aujourd’hui · 19h42' },
     { id: 'soly-2', from: 'me', text: 'Bonjour', time: 'Aujourd’hui · 19h42' },
   ]);
   const days = useMemo(() => {
@@ -1154,6 +1171,7 @@ function SolyRequestSheet({
         label: offset === 0 ? "Aujourd'hui" : 'Demain',
         value: String(date.getDate()),
         meta: `${weekday} ${month}`,
+        iso: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
       };
     });
   }, []);
@@ -1165,18 +1183,54 @@ function SolyRequestSheet({
   ];
 
   useEffect(() => {
-    if (visible) setMode('request');
+    if (visible) {
+      setMode('request');
+      setRequestFeedback(null);
+    }
   }, [visible]);
 
-  const openChat = (withRequest = false) => {
-    if (withRequest && request.trim()) {
+  const openChat = () => {
+    setMode('chat');
+  };
+
+  const submitRequest = async () => {
+    const clean = request.trim();
+    if (clean.length < 10) {
+      setRequestFeedback({ tone: 'error', text: 'Décrivez votre demande en au moins 10 caractères.' });
+      return;
+    }
+
+    const day = days.find((item) => item.key === selectedDay);
+    if (!day) return;
+
+    setSubmitting(true);
+    setRequestFeedback(null);
+    try {
+      const created = await createSolyConciergeRequest(token, {
+        message: clean,
+        scheduledDate: day.iso,
+        day: selectedDay,
+        slot: selectedSlot,
+      });
       setChatMessages((current) => [
         ...current,
-        { id: `soly-${Date.now()}`, from: 'me', text: request.trim(), time: 'Maintenant' },
+        { id: `request-${created.id}`, from: 'me', text: clean, time: 'À l’instant' },
+        { id: `soly-${created.id}`, from: 'soly', text: `Demande ${created.code} bien transmise à l’équipe SOLÝ.`, time: 'À l’instant' },
       ]);
+      setRequest('');
+      setRequestFeedback({
+        tone: 'success',
+        text: `Demande ${created.code} enregistrée${created.stayCode ? ` pour le séjour ${created.stayCode}` : ''}.`,
+      });
+      onRing();
+    } catch (error) {
+      setRequestFeedback({
+        tone: 'error',
+        text: error instanceof Error ? error.message : 'Impossible d’envoyer la demande. Réessayez.',
+      });
+    } finally {
+      setSubmitting(false);
     }
-    if (withRequest) onRing();
-    setMode('chat');
   };
 
   const sendChatMessage = () => {
@@ -1217,22 +1271,35 @@ function SolyRequestSheet({
               keyboardShouldPersistTaps="handled"
             >
               <Text style={styles.solyModernPrompt}>
-                Comment puis-je <Text style={styles.solyModernPromptAccent}>vous servir,</Text> Thibaut ?
+                Comment puis-je <Text style={styles.solyModernPromptAccent}>vous servir,</Text> {firstName(user.name)} ?
               </Text>
-              <Text style={styles.solyModernNote}>Confiez-moi votre envie — je m’occupe de tout.</Text>
+              <Text style={styles.solyModernNote}>
+                Confiez-moi votre envie — je m’occupe de tout{stay?.code ? ` · ${stay.code}` : ''}.
+              </Text>
 
               <SolyRequestPickerLabel label="Votre demande" scene={scene} />
               <View style={styles.solyModernRequestField}>
               <TextInput
                 value={request}
-                onChangeText={setRequest}
+                onChangeText={(value) => {
+                  setRequest(value);
+                  if (requestFeedback?.tone === 'error') setRequestFeedback(null);
+                }}
                 multiline
+                maxLength={2000}
                 textAlignVertical="top"
                   placeholder="Décrivez librement vos envies. Merci de me préciser le nombre de personnes, le jour et le créneau souhaité."
                   placeholderTextColor="#A79E96"
                   style={styles.solyModernRequestInput}
               />
               </View>
+
+              {requestFeedback ? (
+                <View style={[styles.solyRequestFeedback, requestFeedback.tone === 'success' ? styles.solyRequestFeedbackSuccess : styles.solyRequestFeedbackError]}>
+                  <MaterialIcons name={requestFeedback.tone === 'success' ? 'check-circle' : 'error-outline'} size={17} color={requestFeedback.tone === 'success' ? '#8FC39E' : '#E7A198'} />
+                  <Text style={[styles.solyRequestFeedbackText, { color: requestFeedback.tone === 'success' ? '#D6E9DC' : '#F0CBC6' }]}>{requestFeedback.text}</Text>
+                </View>
+              ) : null}
 
               <SolyRequestPickerLabel label="Pour quel jour ?" scene={scene} />
               <View style={styles.solyRequestChoiceGrid}>
@@ -1285,11 +1352,11 @@ function SolyRequestSheet({
               })}
               </View>
 
-              <TouchableOpacity activeOpacity={0.84} onPress={() => openChat(true)} style={styles.solyModernRingButton}>
-                <Text style={styles.solyModernRingText}>SONNER SOLÝ</Text>
+              <TouchableOpacity disabled={submitting} activeOpacity={0.84} onPress={() => void submitRequest()} style={[styles.solyModernRingButton, submitting && styles.solyModernRingButtonDisabled]}>
+                <Text style={styles.solyModernRingText}>{submitting ? 'ENVOI EN COURS…' : 'SONNER SOLÝ'}</Text>
                 <MaterialIcons name="arrow-forward" size={22} color="#092416" />
               </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.72} onPress={() => openChat(false)} style={styles.solyRequestChatLink}>
+              <TouchableOpacity activeOpacity={0.72} onPress={openChat} style={styles.solyRequestChatLink}>
                 <Text style={styles.solyModernChatLink}>Échanger en chat avec un majordome</Text>
               </TouchableOpacity>
             </ScrollView>
@@ -4875,6 +4942,32 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     color: '#173824',
   },
+  solyRequestFeedback: {
+    width: '100%',
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    marginTop: 10,
+  },
+  solyRequestFeedbackSuccess: {
+    backgroundColor: 'rgba(72,141,91,0.16)',
+    borderColor: 'rgba(143,195,158,0.36)',
+  },
+  solyRequestFeedbackError: {
+    backgroundColor: 'rgba(180,67,57,0.15)',
+    borderColor: 'rgba(231,161,152,0.38)',
+  },
+  solyRequestFeedbackText: {
+    flex: 1,
+    fontFamily: type.body,
+    fontSize: 9.5,
+    lineHeight: 14,
+  },
   solyModernRingButton: {
     minHeight: 43,
     borderRadius: 8,
@@ -4884,6 +4977,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 14,
     marginTop: 4,
+  },
+  solyModernRingButtonDisabled: {
+    opacity: 0.58,
   },
   solyModernRingText: {
     fontFamily: type.bodyMedium,

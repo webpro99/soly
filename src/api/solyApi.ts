@@ -80,6 +80,18 @@ export type SolyExplorerGuide = {
   source?: string;
 };
 
+export type SolyConciergeRequest = {
+  id: number;
+  code: string;
+  status: string;
+  message: string;
+  scheduledDate: string;
+  slot: string;
+  slotLabel: string;
+  stayCode: string;
+  createdAt: string;
+};
+
 type AuthResponse = { token: string; user: SolyUser };
 
 async function storageGet(): Promise<string | null> {
@@ -180,4 +192,11 @@ export function loadSolyExplorer(token: string, input: { city?: string; latitude
 
 export function registerSolyPushToken(token: string, pushToken: string, platform: string): Promise<{ registered: boolean }> {
   return apiRequest('/push/register', { method: 'POST', body: JSON.stringify({ token: pushToken, platform }) }, token);
+}
+
+export function createSolyConciergeRequest(
+  token: string,
+  input: { message: string; scheduledDate: string; day: string; slot: string },
+): Promise<SolyConciergeRequest> {
+  return apiRequest('/requests', { method: 'POST', body: JSON.stringify(input) }, token);
 }
