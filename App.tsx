@@ -596,7 +596,7 @@ export default function App() {
             screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && screen !== 'explore' && styles.scrollContentWithDock,
           ]}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={screen !== 'home' && screen !== 'weather' && screen !== 'currency'}
+          scrollEnabled={screen !== 'weather' && screen !== 'currency'}
           keyboardShouldPersistTaps="handled"
         >
           {screen === 'home' ? (
@@ -810,11 +810,11 @@ function HomeScreen({
           onPress={() => setAccountSheetOpen(true)}
           style={[styles.homeAccountPill, { backgroundColor: 'rgba(10,51,31,0.48)', borderColor: scene.borderSoft }]}
         >
-          <View style={[styles.homeAccountInitial, { backgroundColor: scene.accentDeep }]}>
-            <Text style={[styles.homeAccountInitialText, { color: scene.accentPrimary }]}>{userInitials(user.name).slice(0, 1)}</Text>
+          <View style={[styles.homeAccountInitial, { backgroundColor: '#082716', borderColor: scene.accentPrimary }]}>
+            <Text style={[styles.homeAccountInitialText, { color: scene.accentPrimary }]}>{userInitials(user.name)}</Text>
           </View>
           <Text style={[styles.homeAccountName, { color: scene.accentPrimary }]}>{firstName(user.name)}</Text>
-          <Text style={[styles.homeAccountCaret, { color: scene.accentPrimary }]}>⌄</Text>
+          <MaterialIcons name="keyboard-arrow-down" size={17} color={scene.accentPrimary} />
         </TouchableOpacity>
       </View>
 
@@ -3372,7 +3372,8 @@ function AccountScreen({
 }
 
 function firstName(name: string) {
-  return name.trim().split(/\s+/)[0] || 'Client';
+  const value = name.trim().split(/\s+/)[0] || 'Client';
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function userInitials(name: string) {
@@ -3983,8 +3984,8 @@ const styles = StyleSheet.create({
   },
   homeScrollContent: {
     paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 28,
+    paddingTop: 2,
+    paddingBottom: 14,
   },
   weatherScrollContent: {
     flexGrow: 1,
@@ -4002,11 +4003,11 @@ const styles = StyleSheet.create({
   },
   homeTopBar: {
     width: '100%',
-    minHeight: 42,
+    minHeight: 34,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginBottom: 7,
+    marginBottom: 0,
   },
   homeTime: {
     position: 'absolute',
@@ -4016,8 +4017,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   homeAccountPill: {
-    minHeight: 36,
-    borderRadius: 19,
+    minHeight: 34,
+    borderRadius: 18,
     borderWidth: 1,
     paddingLeft: 4,
     paddingRight: 11,
@@ -4027,15 +4028,16 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   homeAccountInitial: {
-    width: 27,
-    height: 27,
+    width: 28,
+    height: 28,
     borderRadius: 14,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   homeAccountInitialText: {
-    fontFamily: type.bodyMedium,
-    fontSize: 9,
+    fontFamily: type.bodyBold,
+    fontSize: 8.5,
     lineHeight: 12,
   },
   homeAccountName: {
@@ -4051,7 +4053,7 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'flex-start',
     gap: 2,
-    marginTop: 2,
+    marginTop: 0,
   },
   homeGreeting: {
     fontFamily: type.serif,
@@ -4065,19 +4067,19 @@ const styles = StyleSheet.create({
   },
   mascotButton: {
     width: '100%',
-    height: 122,
+    height: 106,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    marginTop: 5,
   },
   mascotImage: {
-    width: 139,
-    height: 122,
+    width: 126,
+    height: 106,
   },
   homeBrand: {
     alignItems: 'center',
-    marginTop: 7,
-    marginBottom: 22,
+    marginTop: 2,
+    marginBottom: 10,
   },
   homeLogo: {
     fontFamily: type.display,
@@ -4139,8 +4141,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 9,
-    marginTop: 11,
-    marginBottom: 4,
+    marginTop: 8,
+    marginBottom: 8,
   },
   homeSosLine: {
     flex: 1,
@@ -4683,7 +4685,7 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   homeWakePrompt: {
-    minHeight: 58,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
