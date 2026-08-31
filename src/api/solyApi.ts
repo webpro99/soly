@@ -34,7 +34,13 @@ export type SolyUser = {
 
 export type SolyBootstrap = {
   brand: { name: string; tagline: string };
-  settings: { city: string; currency: string; apiVersion: string };
+  settings: {
+    city: string;
+    currency: string;
+    apiVersion: string;
+    googleMapsApiKey?: string;
+    googleMapsConfigured?: boolean;
+  };
   catalog: {
     services: Array<Record<string, unknown>>;
     eventPackages: Record<string, unknown>;
@@ -80,6 +86,10 @@ export type SolyExplorerGuide = {
   }>;
   generatedAt?: string;
   source?: string;
+  userLocation?: {
+    latitude: number | null;
+    longitude: number | null;
+  };
 };
 
 export type SolyConciergeRequest = {
@@ -108,7 +118,7 @@ export type SolyConciergeRequest = {
 
 export type SolyConciergeMessage = {
   id: string;
-  sender: 'client' | 'staff';
+  sender: 'client' | 'staff' | 'driver';
   senderId: number;
   senderName: string;
   message: string;
@@ -265,8 +275,16 @@ export function loadSolyConciergeRequests(token: string): Promise<{ requests: So
   return apiRequest('/requests', {}, token);
 }
 
-export function replyToSolyConciergeRequest(token: string, requestId: number, message: string): Promise<SolyConciergeRequest> {
-  return apiRequest(`/requests/${requestId}/messages`, { method: 'POST', body: JSON.stringify({ message }) }, token);
+export function replyToSolyConciergeRequest(
+  token: string,
+  requestId: number,
+  message: string,
+  identity?: { sender?: 'staff' | 'driver'; senderName?: string },
+): Promise<SolyConciergeRequest> {
+  return apiRequest(`/requests/${requestId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ message, ...identity }),
+  }, token);
 }
 
 export function loadSolyAdminDashboard(token: string): Promise<SolyAdminDashboard> {

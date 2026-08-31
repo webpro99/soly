@@ -11,7 +11,7 @@ import { useFonts } from 'expo-font';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   Animated,
@@ -157,6 +157,7 @@ type ExplorerGuide = {
   city: string;
   note: string;
   sections: ExplorerSection[];
+  userLocation?: { latitude: number | null; longitude: number | null };
 };
 
 type AgendaEntry = { time: string; title: string; place: string; provider: string };
@@ -222,17 +223,11 @@ const accountGuests = [
   { name: 'Anissa B.', role: 'CONVIVE · A REJOINT', initial: 'A', status: 'déconnectée' },
 ];
 
-const explorerCompanions = [
-  { name: 'Sohan B.', place: 'Riad de la Médina', distance: 'à 2 min', initial: 'S', status: 'online' },
-  { name: 'Yasmine F.', place: 'Jardin Majorelle', distance: 'à 4 min', initial: 'Y', status: 'online' },
-  { name: 'Nicolas B.', place: 'Souk des teinturiers', distance: 'à 9 min', initial: 'N', status: 'away' },
-];
-
 const explorerGuides: Record<string, ExplorerGuide> = {
   marrakech: {
     city: 'Marrakech',
     district: 'Médina',
-    note: 'SOLÝ situe vos proches, vos étapes et glisse quelques adresses choisies à quelques pas.',
+    note: 'SOLÝ situe vos étapes et glisse quelques adresses choisies à quelques pas.',
     sections: [
       {
         title: 'Escapade culturelle',
@@ -629,7 +624,7 @@ export default function App() {
           ) : screen === 'companions' ? (
             <CompanionsScreen navigate={navigate} shareLocation={shareLocation} />
           ) : screen === 'explore' ? (
-            <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
+            <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} mapApiKey={session.bootstrap?.settings.googleMapsApiKey} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
           ) : screen === 'currency' ? (
             <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} onClose={goBack} />
           ) : screen === 'sos' ? (
@@ -692,7 +687,7 @@ export default function App() {
         >
           {selectedSpot ? (
             <>
-              <MiniMap dark city={liveWeather.city} markers={[selectedSpot]} />
+              <MiniMap dark apiKey={session.bootstrap?.settings.googleMapsApiKey} city={liveWeather.city} markers={[selectedSpot]} />
               <Text style={[styles.explorerSheetDescription, { color: scenes.editorial.textSecondary }]}>{selectedSpot.description}</Text>
               <SolyDetailCard label="Distance" value={selectedSpot.distance} scene={scenes.editorial} />
               <SolyDetailCard label="Trajet" value={selectedSpot.eta} scene={scenes.editorial} />
@@ -805,8 +800,38 @@ function HomeScreen({
   const [formalitiesSheetOpen, setFormalitiesSheetOpen] = useState(false);
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [solyRequestOpen, setSolyRequestOpen] = useState(false);
+  const [solyInitialMode, setSolyInitialMode] = useState<'request' | 'chat'>('request');
+  const [solyIncomingCount, setSolyIncomingCount] = useState(0);
+  const seenSolyMessageIds = useRef(new Set<string>());
+  const latestSolyIncomingIds = useRef<string[]>([]);
   const [homeEmergencyOpen, setHomeEmergencyOpen] = useState(false);
   const homeModuleRows = useMemo(() => chunkArray(homeModules, 3), []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadInbox = () => loadSolyConciergeRequests(token)
+      .then(({ requests }) => {
+        if (!mounted) return;
+        const incomingIds = requests.flatMap((item) => {
+          const lastMessage = item.messages[item.messages.length - 1];
+          return lastMessage && lastMessage.sender !== 'client' ? [lastMessage.id] : [];
+        });
+        latestSolyIncomingIds.current = incomingIds;
+        setSolyIncomingCount(incomingIds.filter((id) => !seenSolyMessageIds.current.has(id)).length);
+      })
+      .catch(() => undefined);
+    void loadInbox();
+    const timer = setInterval(loadInbox, 20000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [token]);
+
+  const markSolyMessagesSeen = useCallback(() => {
+    latestSolyIncomingIds.current.forEach((id) => seenSolyMessageIds.current.add(id));
+    setSolyIncomingCount(0);
+  }, []);
 
   const wakeSoly = () => {
     if (awake) return;
@@ -881,6 +906,7 @@ function HomeScreen({
                   onPress={() => {
                     if (isButlerTile) {
                       Vibration.vibrate(6);
+                      setSolyInitialMode('request');
                       setSolyRequestOpen(true);
                       return;
                     }
@@ -896,6 +922,9 @@ function HomeScreen({
                   ]}
                 >
                   <MaterialIcons name={item.icon} size={21} color="#CFA055" style={styles.homeModuleIcon} />
+                  {isButlerTile && solyIncomingCount > 0 ? (
+                    <View style={styles.homeSolyMessageBadge}><Text style={styles.homeSolyMessageBadgeText}>{solyIncomingCount > 9 ? '9+' : solyIncomingCount}</Text></View>
+                  ) : null}
                   <View style={styles.homeTileCopy}>
                     <Text style={[styles.homeModuleLabel, { color: scene.textPrimary }]}>{item.label}</Text>
                     <Text style={[styles.homeModuleKicker, { color: scene.textMuted }]}>{item.kicker}</Text>
@@ -905,6 +934,24 @@ function HomeScreen({
             })}
           </View>
         ))}
+      </View>
+
+      <View style={styles.homeDirectChat}>
+        <Text style={styles.homeDirectChatPrompt}>Vous préférez échanger directement ?</Text>
+        <TouchableOpacity
+          activeOpacity={0.72}
+          onPress={() => {
+            Vibration.vibrate(7);
+            markSolyMessagesSeen();
+            setSolyInitialMode('chat');
+            setSolyRequestOpen(true);
+          }}
+          style={styles.homeDirectChatButton}
+        >
+          <MaterialIcons name="chat-bubble-outline" size={14} color="#CFA055" />
+          <Text style={styles.homeDirectChatText}>OUVRIR LE CHAT</Text>
+          {solyIncomingCount > 0 ? <View style={styles.homeDirectChatCount}><Text style={styles.homeDirectChatCountText}>{solyIncomingCount}</Text></View> : null}
+        </TouchableOpacity>
       </View>
 
       <View style={styles.homeSosRail}>
@@ -947,6 +994,9 @@ function HomeScreen({
       />
       <SolyRequestSheet
         visible={solyRequestOpen}
+        initialMode={solyInitialMode}
+        incomingMessageCount={solyIncomingCount}
+        onChatOpened={markSolyMessagesSeen}
         token={token}
         user={user}
         stay={stay}
@@ -1141,6 +1191,9 @@ function HomeEmergencySectionLabel({ label }: { label: string }) {
 
 function SolyRequestSheet({
   visible,
+  initialMode,
+  incomingMessageCount,
+  onChatOpened,
   token,
   user,
   stay,
@@ -1148,6 +1201,9 @@ function SolyRequestSheet({
   onRing,
 }: {
   visible: boolean;
+  initialMode: 'request' | 'chat';
+  incomingMessageCount: number;
+  onChatOpened: () => void;
   token: string;
   user: SolyUser;
   stay: SolyStay | null;
@@ -1194,7 +1250,8 @@ function SolyRequestSheet({
 
   useEffect(() => {
     if (visible) {
-      setMode('request');
+      setMode(initialMode);
+      if (initialMode === 'chat') onChatOpened();
       setRequestFeedback(null);
       setChatLoading(true);
       loadSolyConciergeRequests(token)
@@ -1205,7 +1262,7 @@ function SolyRequestSheet({
         .catch(() => undefined)
         .finally(() => setChatLoading(false));
     }
-  }, [token, visible]);
+  }, [initialMode, onChatOpened, token, visible]);
 
   useEffect(() => {
     if (!visible || mode !== 'chat') return undefined;
@@ -1216,6 +1273,7 @@ function SolyRequestSheet({
   }, [mode, token, visible]);
 
   const openChat = () => {
+    onChatOpened();
     setMode('chat');
   };
 
@@ -1286,14 +1344,30 @@ function SolyRequestSheet({
         <TouchableOpacity activeOpacity={1} onPress={onClose} style={styles.solyRequestBackdrop} />
         <View style={[styles.solyRequestSheet, styles.solyModernSheet]}>
           <View style={styles.solyModernHandle} />
-          <View style={[styles.solyRequestHeader, { borderBottomColor: scene.borderSoft }]}>
-            <View style={styles.solyRequestHeaderCopy}>
-              <Text style={styles.solyModernTitle}>Solliciter SOLÝ</Text>
-            </View>
+          <View style={[styles.solyRequestHeader, mode === 'chat' && styles.solyChatIdentityHeader, { borderBottomColor: scene.borderSoft }]}>
+            {mode === 'chat' ? (
+              <View style={styles.solyChatIdentity}>
+                <View style={styles.solyChatIdentityAvatar}>
+                  <MaterialIcons name="diamond" size={18} color="#F7F2E8" />
+                  <View style={styles.solyChatIdentityOnlineDot} />
+                </View>
+                <View style={styles.solyChatIdentityCopy}>
+                  <Text style={styles.solyChatIdentityTitle}>SOLÝ</Text>
+                  <Text style={styles.solyChatIdentitySubtitle}>Votre conciergerie privée</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.solyRequestHeaderCopy}>
+                <Text style={styles.solyModernTitle}>Solliciter SOLÝ</Text>
+              </View>
+            )}
             <TouchableOpacity activeOpacity={0.72} onPress={onClose} style={styles.solyModernClose}>
               <MaterialIcons name="close" size={23} color="#A6B0A5" />
             </TouchableOpacity>
           </View>
+          {mode === 'chat' ? (
+            <View style={styles.solyChatPresence}><View style={styles.solyChatPresenceDot} /><Text style={styles.solyChatPresenceText}>EN LIGNE  ·  RÉPONSE RAPIDE</Text></View>
+          ) : null}
 
           {mode === 'request' ? (
             <ScrollView
@@ -1388,9 +1462,14 @@ function SolyRequestSheet({
                 <Text style={styles.solyModernRingText}>{submitting ? 'ENVOI EN COURS…' : 'SONNER SOLÝ'}</Text>
                 <MaterialIcons name="arrow-forward" size={22} color="#092416" />
               </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.72} onPress={openChat} style={styles.solyRequestChatLink}>
-                <Text style={styles.solyModernChatLink}>Échanger en chat avec un majordome</Text>
-              </TouchableOpacity>
+              <View style={styles.solyRequestDirectChat}>
+                <Text style={styles.solyRequestDirectChatPrompt}>Vous préférez échanger directement ?</Text>
+                <TouchableOpacity activeOpacity={0.72} onPress={openChat} style={styles.solyRequestChatLink}>
+                  <MaterialIcons name="chat-bubble-outline" size={14} color="#CFA055" />
+                  <Text style={styles.solyRequestChatLinkText}>OUVRIR LE CHAT</Text>
+                  {incomingMessageCount > 0 ? <View style={styles.solyRequestChatBadge}><Text style={styles.solyRequestChatBadgeText}>{incomingMessageCount}</Text></View> : null}
+                </TouchableOpacity>
+              </View>
             </ScrollView>
           ) : (
             <View style={styles.solyChatBody}>
@@ -1421,10 +1500,16 @@ function SolyRequestSheet({
                     </View>
                     {activeRequest.messages.map((message) => {
                       const mine = message.sender === 'client';
+                      const driver = message.sender === 'driver';
                       return (
                         <View key={message.id} style={[styles.solyChatMessageRow, mine ? styles.solyChatMessageRowMine : styles.solyChatMessageRowSoly]}>
-                          <View style={[styles.solyChatBubble, mine ? styles.solyChatBubbleMine : styles.solyChatBubbleSoly]}>
-                            {!mine ? <Text style={styles.solyChatSender}>SOLÝ · {message.senderName || 'Votre majordome'}</Text> : null}
+                          <View style={[styles.solyChatBubble, mine ? styles.solyChatBubbleMine : styles.solyChatBubbleSoly, driver && styles.solyChatBubbleDriver]}>
+                            {!mine ? (
+                              <View style={styles.solyChatSenderRow}>
+                                <MaterialIcons name={driver ? 'local-taxi' : 'diamond'} size={12} color="#CFA055" />
+                                <Text style={styles.solyChatSender}>{driver ? 'CHAUFFEUR' : 'ÉQUIPE SOLÝ'} · {message.senderName || (driver ? 'Votre chauffeur' : 'Votre majordome')}</Text>
+                              </View>
+                            ) : null}
                             <Text style={styles.solyChatMessageText}>{message.message}</Text>
                             <Text style={styles.solyChatMessageTime}>{formatSolyMessageTime(message.createdAt)}</Text>
                           </View>
@@ -2961,6 +3046,7 @@ function ExploreScreen({
   city,
   guide: dynamicGuide,
   loading,
+  mapApiKey,
   onClose,
   onSelect,
   notify,
@@ -2969,6 +3055,7 @@ function ExploreScreen({
   city: string;
   guide: SolyExplorerGuide | null;
   loading: boolean;
+  mapApiKey?: string;
   onClose: () => void;
   onSelect: (spot: ExplorerActivity) => void;
   notify: (message: string, pattern?: number | number[]) => void;
@@ -2996,32 +3083,11 @@ function ExploreScreen({
 
       {loading ? <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text> : null}
 
-      <MiniMap dark withCompanions city={guide.city} markers={activityMarkers} />
+      <MiniMap dark apiKey={mapApiKey} city={guide.city} markers={activityMarkers} userLocation={guide.userLocation} />
 
       <Text style={styles.explorerIntro}>
         Vous êtes dans la <Text style={styles.explorerAccentText}>{guide.district}</Text>. {guide.note}
       </Text>
-
-      <View style={styles.explorerBlock}>
-        <Text style={styles.explorerBlockLabel}>VOS PROCHES DISPONIBLES · EN DIRECT</Text>
-        <View style={styles.explorerCompanionGrid}>
-          {explorerCompanions.map((person) => (
-            <TouchableOpacity
-              key={person.name}
-              activeOpacity={0.78}
-              onPress={() => notify(`${person.name} est ${person.distance}`)}
-              style={styles.explorerCompanionCard}
-            >
-              <View style={[styles.explorerLiveDot, { backgroundColor: person.status === 'online' ? '#D9E5B7' : '#9AC2C8' }]} />
-              <View style={styles.explorerCompanionCopy}>
-                <Text style={styles.explorerCompanionName}>{person.name}</Text>
-                <Text style={styles.explorerCompanionDistance}>{person.distance}</Text>
-                <Text style={styles.explorerCompanionPlace}>{person.place}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
 
       {guide.sections.map((section) => {
         const isOpen = openSection === section.title;
@@ -3540,13 +3606,17 @@ function MiniMap({
   withCompanions = false,
   city,
   markers = [],
+  apiKey,
+  userLocation,
 }: {
   dark?: boolean;
   withCompanions?: boolean;
   city?: string;
   markers?: ExplorerActivity[];
+  apiKey?: string;
+  userLocation?: { latitude: number | null; longitude: number | null };
 }) {
-  return <RealMap dark={dark} withCompanions={withCompanions} city={city} markers={markers} />;
+  return <RealMap apiKey={apiKey} dark={dark} withCompanions={withCompanions} city={city} markers={markers} userLocation={userLocation} />;
 }
 
 function EmergencyModal({
@@ -4890,6 +4960,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   homeModuleTile: {
+    position: 'relative',
     width: '30%',
     minWidth: 0,
     height: 78,
@@ -4900,6 +4971,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
+  },
+  homeSolyMessageBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 7,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#C7655B',
+    borderWidth: 1.5,
+    borderColor: '#062610',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeSolyMessageBadgeText: {
+    fontFamily: type.bodyBold,
+    fontSize: 7,
+    color: '#FFF8EE',
   },
   homeModuleTileLocked: {
     opacity: 0.44,
@@ -4926,6 +5016,45 @@ const styles = StyleSheet.create({
     fontSize: 8,
     lineHeight: 10,
     textAlign: 'center',
+  },
+  homeDirectChat: {
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 17,
+  },
+  homeDirectChatPrompt: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 12,
+    color: '#AEBBAF',
+  },
+  homeDirectChatButton: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(207,160,85,0.5)',
+    paddingHorizontal: 5,
+  },
+  homeDirectChatText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 1.2,
+    color: '#CFA055',
+  },
+  homeDirectChatCount: {
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#C7655B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeDirectChatCountText: {
+    fontFamily: type.bodyBold,
+    fontSize: 7,
+    color: '#FFF',
   },
   solyRequestRoot: {
     flex: 1,
@@ -5072,6 +5201,71 @@ const styles = StyleSheet.create({
     color: '#AAB8AE',
     textAlign: 'center',
   },
+  solyChatIdentityHeader: {
+    minHeight: 82,
+    paddingBottom: 12,
+  },
+  solyChatIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  solyChatIdentityAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#B98B39',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  solyChatIdentityOnlineDot: {
+    position: 'absolute',
+    right: 1,
+    bottom: 1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#5AAE74',
+    borderWidth: 2,
+    borderColor: '#164A31',
+  },
+  solyChatIdentityCopy: {
+    flex: 1,
+  },
+  solyChatIdentityTitle: {
+    fontFamily: type.serif,
+    fontSize: 25,
+    lineHeight: 28,
+    color: '#CFA055',
+  },
+  solyChatIdentitySubtitle: {
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    color: '#A9B7AE',
+  },
+  solyChatPresence: {
+    minHeight: 37,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(207,160,85,0.18)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  solyChatPresenceDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#65B37C',
+  },
+  solyChatPresenceText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    letterSpacing: 1.1,
+    color: '#A9B7AE',
+  },
   solyChatBody: {
     flex: 1,
   },
@@ -5154,6 +5348,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#082719',
     borderBottomLeftRadius: 4,
   },
+  solyChatBubbleDriver: {
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.28)',
+    backgroundColor: '#123725',
+  },
   solyChatBubbleMine: {
     borderWidth: 1,
     borderColor: 'rgba(207,160,85,0.36)',
@@ -5165,7 +5364,12 @@ const styles = StyleSheet.create({
     fontSize: 8,
     lineHeight: 11,
     color: '#CFA055',
-    marginBottom: 4,
+  },
+  solyChatSenderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 5,
   },
   solyChatRequestContext: {
     width: '100%',
@@ -5493,17 +5697,47 @@ const styles = StyleSheet.create({
   },
   solyRequestChatLink: {
     alignSelf: 'center',
+    minHeight: 30,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(239,234,224,0.32)',
-    paddingHorizontal: 8,
-    paddingBottom: 2,
+    borderBottomColor: 'rgba(207,160,85,0.48)',
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
   },
   solyRequestChatLinkText: {
-    fontFamily: type.serif,
-    fontSize: 14,
-    lineHeight: 18,
-    fontStyle: 'italic',
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    lineHeight: 13,
+    letterSpacing: 1.2,
+    color: '#CFA055',
     textAlign: 'center',
+  },
+  solyRequestDirectChat: {
+    alignItems: 'center',
+    gap: 3,
+    paddingTop: 2,
+  },
+  solyRequestDirectChatPrompt: {
+    fontFamily: 'EBGaramond_400Regular_Italic',
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#AAB8AE',
+    textAlign: 'center',
+  },
+  solyRequestChatBadge: {
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#C7655B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  solyRequestChatBadgeText: {
+    fontFamily: type.bodyBold,
+    fontSize: 7,
+    color: '#FFF',
   },
   brandBlock: {
     paddingTop: spacing.md,

@@ -1,8 +1,7 @@
-import React from 'react';
-import { Image, StyleSheet, View } from 'react-native';
-import { companions } from '../data/soly';
+import React, { useMemo } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { scenes } from '../theme';
-import { MapPin } from './SolyPrimitives';
 
 type MapMarker = {
   title: string;
@@ -11,131 +10,141 @@ type MapMarker = {
   label?: string;
 };
 
-const cityCenters: Record<string, { latitude: number; longitude: number }> = {
+type Coordinates = {
+  latitude: number;
+  longitude: number;
+};
+
+const cityCenters: Record<string, Coordinates> = {
   marrakech: { latitude: 31.6295, longitude: -7.9811 },
   casablanca: { latitude: 33.5899, longitude: -7.6039 },
   rabat: { latitude: 34.0209, longitude: -6.8416 },
   paris: { latitude: 48.8647, longitude: 2.3376 },
 };
 
-const companionPositions = [
-  { name: 'Camille', x: '28%', y: '42%' },
-  { name: 'Nassim', x: '62%', y: '36%' },
-  { name: 'Elena', x: '48%', y: '64%' },
-];
-
-const fallbackMarkerPositions = ['34%', '50%', '66%', '42%', '58%', '74%'];
-
 export function RealMap({
   dark = false,
-  withCompanions = false,
   city,
   markers = [],
+  apiKey = '',
+  userLocation,
 }: {
   dark?: boolean;
   withCompanions?: boolean;
   city?: string;
   markers?: MapMarker[];
+  apiKey?: string;
+  userLocation?: { latitude: number | null; longitude: number | null };
 }) {
   const scene = dark ? scenes.editorial : scenes.immersive;
-  const center = cityCenters[cityKey(city)] ?? cityCenters.marrakech;
-  const tiles = tileUrls(center.latitude, center.longitude, 14);
+  const validMarkers = markers.filter(isValidMarker);
+  const fallbackCenter = cityCenters[cityKey(city)] ?? cityCenters.marrakech;
+  const center = isValidCoordinates(userLocation) ? userLocation : validMarkers[0] ?? fallbackCenter;
+  const cleanKey = apiKey.trim();
+  const source = useMemo(() => {
+    if (!cleanKey) {
+      const query = encodeURIComponent(`${center.latitude},${center.longitude}`);
+      return { uri: `https://www.google.com/maps?q=${query}&z=14&output=embed` };
+    }
+
+    return {
+      html: googleMapHtml({
+        apiKey: cleanKey,
+        center,
+        dark,
+        markers: validMarkers,
+        userLocation: isValidCoordinates(userLocation) ? userLocation : undefined,
+      }),
+      baseUrl: 'https://solyvents.fr',
+    };
+  }, [center.latitude, center.longitude, cleanKey, dark, validMarkers, userLocation]);
 
   return (
     <View style={[styles.map, { backgroundColor: dark ? '#11100F' : '#0C3823', borderColor: scene.border }]}>
-      <View style={styles.osmTileGrid}>
-        {tiles.map((tile) => (
-          <Image key={tile} source={{ uri: tile }} resizeMode="cover" style={styles.osmTile} />
-        ))}
-      </View>
-      <View style={styles.mapScrim} />
-      <View style={styles.mainPin}>
-        <MapPin scene={scene} label="VO" pulse />
-      </View>
-      {markers.slice(0, 6).map((marker, index) => (
-        <View
-          key={marker.title}
-          style={[
-            styles.activityPin,
-            {
-              left: (fallbackMarkerPositions[index] ?? '50%') as `${number}%`,
-              top: (fallbackMarkerPositions[(index + 2) % fallbackMarkerPositions.length] ?? '50%') as `${number}%`,
-            },
-          ]}
-        >
-          <MapPin scene={scene} label={marker.label ?? '•'} />
-        </View>
-      ))}
-      {withCompanions
-        ? companionPositions.map((marker) => {
-            const person = companions.find((item) => item.name === marker.name);
-
-            return (
-              <View key={marker.name} style={[styles.companionPin, { left: marker.x as `${number}%`, top: marker.y as `${number}%` }]}>
-                <MapPin scene={scene} label={person?.initials.slice(0, 1) ?? marker.name.slice(0, 1)} pulse={person?.status === 'en ligne'} />
-              </View>
-            );
-          })
-        : null}
+      <WebView
+        source={source}
+        originWhitelist={['https://*', 'http://*']}
+        javaScriptEnabled
+        domStorageEnabled
+        geolocationEnabled
+        setSupportMultipleWindows={false}
+        startInLoadingState
+        style={styles.webView}
+      />
     </View>
   );
 }
 
-function cityKey(city?: string) {
-  const normalized = (city ?? '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+function googleMapHtml({
+  apiKey,
+  center,
+  dark,
+  markers,
+  userLocation,
+}: {
+  apiKey: string;
+  center: Coordinates;
+  dark: boolean;
+  markers: MapMarker[];
+  userLocation?: Coordinates;
+}) {
+  const config = JSON.stringify({ center, dark, markers, userLocation }).replace(/</g, '\\u003c');
+  const encodedKey = encodeURIComponent(apiKey);
 
+  return `<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>html,body,#map{width:100%;height:100%;margin:0;padding:0;background:#0b2417}.gm-style-cc{display:none}</style></head>
+<body><div id="map"></div><script>
+const config=${config};
+window.initMap=function(){
+  const map=new google.maps.Map(document.getElementById('map'),{
+    center:{lat:config.center.latitude,lng:config.center.longitude},zoom:14,
+    disableDefaultUI:true,zoomControl:true,gestureHandling:'greedy',
+    styles:config.dark?[{elementType:'geometry',stylers:[{color:'#173426'}]},{elementType:'labels.text.fill',stylers:[{color:'#d8d2c4'}]},{elementType:'labels.text.stroke',stylers:[{color:'#173426'}]},{featureType:'road',elementType:'geometry',stylers:[{color:'#2a4a39'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0a2117'}]}]:[]
+  });
+  const bounds=new google.maps.LatLngBounds();
+  config.markers.forEach(function(item){
+    const position={lat:item.latitude,lng:item.longitude};
+    const marker=new google.maps.Marker({map,position,title:item.title,label:item.label||undefined});
+    const info=new google.maps.InfoWindow({content:'<div style="font:600 13px Arial;color:#173426;padding:2px 4px">'+String(item.title).replace(/[<>&]/g,'')+'</div>'});
+    marker.addListener('click',function(){info.open({anchor:marker,map});});
+    bounds.extend(position);
+  });
+  if(config.userLocation){
+    const position={lat:config.userLocation.latitude,lng:config.userLocation.longitude};
+    new google.maps.Marker({map,position,title:'Votre position',icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#CFA055',fillOpacity:1,strokeColor:'#fff',strokeWeight:3}});
+    bounds.extend(position);
+  }
+  if(config.markers.length>1){map.fitBounds(bounds,48);}
+};
+</script><script async defer src="https://maps.googleapis.com/maps/api/js?key=${encodedKey}&callback=initMap"></script></body></html>`;
+}
+
+function isValidMarker(marker: MapMarker) {
+  return Number.isFinite(marker.latitude) && Number.isFinite(marker.longitude) && Math.abs(marker.latitude) <= 90 && Math.abs(marker.longitude) <= 180;
+}
+
+function isValidCoordinates(value?: { latitude: number | null; longitude: number | null }): value is Coordinates {
+  return Boolean(value && Number.isFinite(value.latitude) && Number.isFinite(value.longitude) && Math.abs(value.latitude!) <= 90 && Math.abs(value.longitude!) <= 180);
+}
+
+function cityKey(city?: string) {
+  const normalized = (city ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (normalized.includes('casablanca')) return 'casablanca';
   if (normalized.includes('rabat')) return 'rabat';
   if (normalized.includes('paris')) return 'paris';
   return 'marrakech';
 }
 
-function tileUrls(latitude: number, longitude: number, zoom: number) {
-  const n = 2 ** zoom;
-  const x = Math.floor(((longitude + 180) / 360) * n);
-  const latRad = (latitude * Math.PI) / 180;
-  const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
-
-  return [
-    `https://a.basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y}.png`,
-    `https://b.basemaps.cartocdn.com/dark_all/${zoom}/${x + 1}/${y}.png`,
-    `https://c.basemaps.cartocdn.com/dark_all/${zoom}/${x}/${y + 1}.png`,
-    `https://d.basemaps.cartocdn.com/dark_all/${zoom}/${x + 1}/${y + 1}.png`,
-  ];
-}
-
 const styles = StyleSheet.create({
   map: {
-    height: 220,
-    borderRadius: 8,
+    height: 238,
+    borderRadius: 12,
     borderWidth: 1,
     overflow: 'hidden',
   },
-  osmTileGrid: {
-    ...StyleSheet.absoluteFillObject,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  osmTile: {
-    width: '50%',
-    height: '50%',
-  },
-  mapScrim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(8,28,18,0.22)',
-  },
-  mainPin: {
-    position: 'absolute',
-    left: '52%',
-    top: '48%',
-  },
-  activityPin: {
-    position: 'absolute',
-  },
-  companionPin: {
-    position: 'absolute',
+  webView: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
 });
