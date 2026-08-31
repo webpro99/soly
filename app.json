@@ -2,7 +2,7 @@
   "expo": {
     "name": "SOLY",
     "slug": "soly",
-    "version": "1.0.24",
+    "version": "1.0.25",
     "orientation": "portrait",
     "icon": "./assets/icon-bell-character.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.soly.app",
-      "versionCode": 26,
+      "versionCode": 27,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon-bell-character.png",
         "backgroundColor": "#134F32"

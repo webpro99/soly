@@ -13,6 +13,8 @@ export type SolyUser = {
   email: string;
   phone: string;
   memberSince: string;
+  role?: 'client' | 'staff';
+  permissions?: string[];
   client: {
     id: number;
     code: string;
@@ -84,12 +86,70 @@ export type SolyConciergeRequest = {
   id: number;
   code: string;
   status: string;
+  priority: string;
+  title: string;
   message: string;
   scheduledDate: string;
   slot: string;
   slotLabel: string;
   stayCode: string;
+  stayId: number;
+  client: {
+    id: number;
+    code: string;
+    name: string;
+    email: string;
+    phone: string;
+  };
+  messages: SolyConciergeMessage[];
   createdAt: string;
+  updatedAt: string;
+};
+
+export type SolyConciergeMessage = {
+  id: string;
+  sender: 'client' | 'staff';
+  senderId: number;
+  senderName: string;
+  message: string;
+  createdAt: string;
+};
+
+export type SolyAdminStay = {
+  id: number;
+  code: string;
+  bookingId: number;
+  status: string;
+  arrivalDate: string;
+  departureDate: string;
+  guests: number;
+  totalAmount: number;
+  city: string;
+  paymentStatus: string;
+  paidAmount: number;
+  hotelStatus: string;
+  hotelAmount: number;
+  requestCount: number;
+  adults: number;
+  children: number;
+  rooms: number;
+  nights: number;
+  accommodation: string;
+  accommodationBudget: string;
+  arrivalMode: string;
+  vehicle: string;
+  occasion: string;
+  programDays: number;
+  client: { id: number; code: string; name: string; email: string; phone: string };
+  notes: string;
+  updatedAt: string;
+};
+
+export type SolyAdminDashboard = {
+  stats: { openRequests: number; stays: number; clients: number };
+  requests: SolyConciergeRequest[];
+  stays: SolyAdminStay[];
+  updatedAt: string;
 };
 
 type AuthResponse = { token: string; user: SolyUser };
@@ -199,4 +259,16 @@ export function createSolyConciergeRequest(
   input: { message: string; scheduledDate: string; day: string; slot: string },
 ): Promise<SolyConciergeRequest> {
   return apiRequest('/requests', { method: 'POST', body: JSON.stringify(input) }, token);
+}
+
+export function loadSolyConciergeRequests(token: string): Promise<{ requests: SolyConciergeRequest[] }> {
+  return apiRequest('/requests', {}, token);
+}
+
+export function replyToSolyConciergeRequest(token: string, requestId: number, message: string): Promise<SolyConciergeRequest> {
+  return apiRequest(`/requests/${requestId}/messages`, { method: 'POST', body: JSON.stringify({ message }) }, token);
+}
+
+export function loadSolyAdminDashboard(token: string): Promise<SolyAdminDashboard> {
+  return apiRequest('/admin/dashboard', {}, token);
 }

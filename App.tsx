@@ -46,8 +46,9 @@ import {
 import { RealMap } from './src/components/RealMap';
 import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
+import { AdminPortal } from './src/components/AdminPortal';
 import { useSolySession } from './src/hooks/useSolySession';
-import { createSolyConciergeRequest, loadSolyExplorer, loadSolyStay, registerSolyPushToken, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
+import { createSolyConciergeRequest, loadSolyConciergeRequests, loadSolyExplorer, loadSolyStay, registerSolyPushToken, replyToSolyConciergeRequest, type SolyConciergeRequest, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
   companions,
@@ -448,6 +449,10 @@ export default function App() {
 
   useEffect(() => {
     if (!session.token || !session.user) return;
+    if (session.user.role === 'staff') {
+      setDynamicStay(null);
+      return;
+    }
     let mounted = true;
     loadSolyStay(session.token)
       .then((stay) => mounted && setDynamicStay(stay?.id ? stay : null))
@@ -506,6 +511,10 @@ export default function App() {
         onRegister={session.register}
       />
     );
+  }
+
+  if (session.user.role === 'staff') {
+    return <AdminPortal token={session.token!} user={session.user} onLogout={session.logout} />;
   }
 
   const navigate = (next: ModuleKey, vibration = 6) => {
@@ -1152,11 +1161,12 @@ function SolyRequestSheet({
   const [mode, setMode] = useState<'request' | 'chat'>('request');
   const [chatDraft, setChatDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatSending, setChatSending] = useState(false);
+  const [requests, setRequests] = useState<SolyConciergeRequest[]>([]);
+  const [activeRequestId, setActiveRequestId] = useState<number | null>(null);
   const [requestFeedback, setRequestFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  const [chatMessages, setChatMessages] = useState([
-    { id: 'soly-1', from: 'soly', text: `Je suis à votre service, ${firstName(user.name)}. Je traite votre demande.`, time: 'Aujourd’hui · 19h42' },
-    { id: 'soly-2', from: 'me', text: 'Bonjour', time: 'Aujourd’hui · 19h42' },
-  ]);
+  const activeRequest = requests.find((item) => item.id === activeRequestId) ?? requests[0] ?? null;
   const days = useMemo(() => {
     const today = new Date();
 
@@ -1186,8 +1196,24 @@ function SolyRequestSheet({
     if (visible) {
       setMode('request');
       setRequestFeedback(null);
+      setChatLoading(true);
+      loadSolyConciergeRequests(token)
+        .then(({ requests: items }) => {
+          setRequests(items);
+          setActiveRequestId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null);
+        })
+        .catch(() => undefined)
+        .finally(() => setChatLoading(false));
     }
-  }, [visible]);
+  }, [token, visible]);
+
+  useEffect(() => {
+    if (!visible || mode !== 'chat') return undefined;
+    const timer = setInterval(() => {
+      loadSolyConciergeRequests(token).then(({ requests: items }) => setRequests(items)).catch(() => undefined);
+    }, 12000);
+    return () => clearInterval(timer);
+  }, [mode, token, visible]);
 
   const openChat = () => {
     setMode('chat');
@@ -1212,17 +1238,15 @@ function SolyRequestSheet({
         day: selectedDay,
         slot: selectedSlot,
       });
-      setChatMessages((current) => [
-        ...current,
-        { id: `request-${created.id}`, from: 'me', text: clean, time: 'À l’instant' },
-        { id: `soly-${created.id}`, from: 'soly', text: `Demande ${created.code} bien transmise à l’équipe SOLÝ.`, time: 'À l’instant' },
-      ]);
+      setRequests((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      setActiveRequestId(created.id);
       setRequest('');
       setRequestFeedback({
         tone: 'success',
         text: `Demande ${created.code} enregistrée${created.stayCode ? ` pour le séjour ${created.stayCode}` : ''}.`,
       });
       onRing();
+      setMode('chat');
     } catch (error) {
       setRequestFeedback({
         tone: 'error',
@@ -1233,12 +1257,20 @@ function SolyRequestSheet({
     }
   };
 
-  const sendChatMessage = () => {
+  const sendChatMessage = async () => {
     const clean = chatDraft.trim();
-    if (!clean) return;
-    setChatMessages((current) => [...current, { id: `soly-${Date.now()}`, from: 'me', text: clean, time: 'Maintenant' }]);
-    setChatDraft('');
-    Vibration.vibrate(8);
+    if (!clean || !activeRequest || chatSending) return;
+    setChatSending(true);
+    try {
+      const updated = await replyToSolyConciergeRequest(token, activeRequest.id, clean);
+      setRequests((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setChatDraft('');
+      Vibration.vibrate(8);
+    } catch (error) {
+      setRequestFeedback({ tone: 'error', text: error instanceof Error ? error.message : 'Message non envoyé.' });
+    } finally {
+      setChatSending(false);
+    }
   };
 
   return (
@@ -1362,32 +1394,71 @@ function SolyRequestSheet({
             </ScrollView>
           ) : (
             <View style={styles.solyChatBody}>
-              <ScrollView contentContainerStyle={styles.solyChatMessages} showsVerticalScrollIndicator={false}>
-                {chatMessages.map((message) => {
-                  const mine = message.from === 'me';
-                  return (
-                    <View key={message.id} style={[styles.solyChatMessageRow, mine ? styles.solyChatMessageRowMine : styles.solyChatMessageRowSoly]}>
-                      <View style={[styles.solyChatBubble, mine ? styles.solyChatBubbleMine : styles.solyChatBubbleSoly]}>
-                        <Text style={styles.solyChatMessageText}>{message.text}</Text>
-                        <Text style={styles.solyChatMessageTime}>{message.time}</Text>
-                      </View>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-              <View style={styles.solyChatComposer}>
-                <TextInput
-                  value={chatDraft}
-                  onChangeText={setChatDraft}
-                  onSubmitEditing={sendChatMessage}
-                  placeholder="Écrire un message..."
-                  placeholderTextColor="#879A8D"
-                  style={styles.solyChatInput}
-                />
-                <TouchableOpacity activeOpacity={0.78} onPress={sendChatMessage} style={styles.solyChatSend}>
-                  <MaterialIcons name="chevron-right" size={23} color="#092416" />
+              <View style={styles.solyChatToolbar}>
+                <TouchableOpacity activeOpacity={0.72} onPress={() => setMode('request')} style={styles.solyChatBackButton}>
+                  <MaterialIcons name="add" size={18} color="#CFA055" />
+                  <Text style={styles.solyChatBackText}>NOUVELLE DEMANDE</Text>
                 </TouchableOpacity>
+                {activeRequest ? <Text style={styles.solyChatTicket}>{activeRequest.code}</Text> : null}
               </View>
+              {requests.length > 1 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.solyChatThreads}>
+                  {requests.map((item) => (
+                    <TouchableOpacity key={item.id} activeOpacity={0.75} onPress={() => setActiveRequestId(item.id)} style={[styles.solyChatThreadChip, activeRequest?.id === item.id && styles.solyChatThreadChipActive]}>
+                      <Text style={[styles.solyChatThreadText, activeRequest?.id === item.id && styles.solyChatThreadTextActive]}>{item.stayCode || item.code}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              ) : null}
+              {chatLoading ? (
+                <View style={styles.solyChatEmpty}><Text style={styles.solyChatEmptyText}>Synchronisation avec SOLÝ…</Text></View>
+              ) : activeRequest ? (
+                <>
+                  <ScrollView contentContainerStyle={styles.solyChatMessages} showsVerticalScrollIndicator={false}>
+                    <View style={styles.solyChatRequestContext}>
+                      <Text style={styles.solyChatRequestContextLabel}>{activeRequest.scheduledDate} · {activeRequest.slotLabel}</Text>
+                      <Text style={styles.solyChatRequestContextText}>{activeRequest.title}</Text>
+                    </View>
+                    {activeRequest.messages.map((message) => {
+                      const mine = message.sender === 'client';
+                      return (
+                        <View key={message.id} style={[styles.solyChatMessageRow, mine ? styles.solyChatMessageRowMine : styles.solyChatMessageRowSoly]}>
+                          <View style={[styles.solyChatBubble, mine ? styles.solyChatBubbleMine : styles.solyChatBubbleSoly]}>
+                            {!mine ? <Text style={styles.solyChatSender}>SOLÝ · {message.senderName || 'Votre majordome'}</Text> : null}
+                            <Text style={styles.solyChatMessageText}>{message.message}</Text>
+                            <Text style={styles.solyChatMessageTime}>{formatSolyMessageTime(message.createdAt)}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                  {requestFeedback?.tone === 'error' ? <Text style={styles.solyChatError}>{requestFeedback.text}</Text> : null}
+                  <View style={styles.solyChatComposer}>
+                    <TextInput
+                      value={chatDraft}
+                      onChangeText={(value) => {
+                        setChatDraft(value);
+                        if (requestFeedback?.tone === 'error') setRequestFeedback(null);
+                      }}
+                      onSubmitEditing={() => void sendChatMessage()}
+                      placeholder="Écrire un message..."
+                      placeholderTextColor="#879A8D"
+                      maxLength={2000}
+                      style={styles.solyChatInput}
+                    />
+                    <TouchableOpacity disabled={!chatDraft.trim() || chatSending} activeOpacity={0.78} onPress={() => void sendChatMessage()} style={[styles.solyChatSend, (!chatDraft.trim() || chatSending) && styles.solyChatSendDisabled]}>
+                      {chatSending ? <Text style={styles.solyChatSending}>…</Text> : <MaterialIcons name="chevron-right" size={23} color="#092416" />}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.solyChatEmpty}>
+                  <MaterialIcons name="forum" size={30} color="#CFA055" />
+                  <Text style={styles.solyChatEmptyTitle}>Aucune conversation</Text>
+                  <Text style={styles.solyChatEmptyText}>Créez votre première demande pour échanger avec un majordome SOLÝ.</Text>
+                  <TouchableOpacity activeOpacity={0.78} onPress={() => setMode('request')} style={styles.solyChatEmptyButton}><Text style={styles.solyChatEmptyButtonText}>SOLLICITER SOLÝ</Text></TouchableOpacity>
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -3443,6 +3514,13 @@ function firstName(name: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function formatSolyMessageTime(value: string) {
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value || 'À l’instant';
+  return date.toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 function userInitials(name: string) {
   return name
     .trim()
@@ -4997,6 +5075,57 @@ const styles = StyleSheet.create({
   solyChatBody: {
     flex: 1,
   },
+  solyChatToolbar: {
+    minHeight: 48,
+    paddingHorizontal: 18,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(207,160,85,0.18)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  solyChatBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  solyChatBackText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    letterSpacing: 1.2,
+    color: '#CFA055',
+  },
+  solyChatTicket: {
+    fontFamily: type.body,
+    fontSize: 8,
+    color: '#90A097',
+  },
+  solyChatThreads: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    gap: 7,
+  },
+  solyChatThreadChip: {
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.2)',
+    paddingHorizontal: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  solyChatThreadChipActive: {
+    backgroundColor: '#CFA055',
+    borderColor: '#CFA055',
+  },
+  solyChatThreadText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    color: '#A5B2AA',
+  },
+  solyChatThreadTextActive: {
+    color: '#092416',
+  },
   solyChatMessages: {
     flexGrow: 1,
     paddingHorizontal: 24,
@@ -5009,10 +5138,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   solyChatMessageRowSoly: {
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   solyChatMessageRowMine: {
-    justifyContent: 'flex-start',
+    justifyContent: 'flex-end',
   },
   solyChatBubble: {
     maxWidth: '72%',
@@ -5023,11 +5152,42 @@ const styles = StyleSheet.create({
   },
   solyChatBubbleSoly: {
     backgroundColor: '#082719',
+    borderBottomLeftRadius: 4,
   },
   solyChatBubbleMine: {
     borderWidth: 1,
     borderColor: 'rgba(207,160,85,0.36)',
     backgroundColor: 'rgba(207,160,85,0.08)',
+    borderBottomRightRadius: 4,
+  },
+  solyChatSender: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    lineHeight: 11,
+    color: '#CFA055',
+    marginBottom: 4,
+  },
+  solyChatRequestContext: {
+    width: '100%',
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.24)',
+    backgroundColor: 'rgba(207,160,85,0.06)',
+    padding: 11,
+    marginBottom: 5,
+  },
+  solyChatRequestContextLabel: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    letterSpacing: 0.8,
+    color: '#CFA055',
+  },
+  solyChatRequestContextText: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 15,
+    color: '#B2BFB7',
+    marginTop: 4,
   },
   solyChatMessageText: {
     fontFamily: type.body,
@@ -5071,6 +5231,56 @@ const styles = StyleSheet.create({
     backgroundColor: '#CFA055',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  solyChatSendDisabled: {
+    opacity: 0.42,
+  },
+  solyChatSending: {
+    fontFamily: type.bodyMedium,
+    fontSize: 18,
+    color: '#092416',
+  },
+  solyChatError: {
+    paddingHorizontal: 20,
+    paddingBottom: 7,
+    fontFamily: type.bodyMedium,
+    fontSize: 9,
+    color: '#F0B4A9',
+  },
+  solyChatEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 34,
+  },
+  solyChatEmptyTitle: {
+    fontFamily: type.serif,
+    fontSize: 22,
+    color: '#F2EEE5',
+    marginTop: 9,
+  },
+  solyChatEmptyText: {
+    fontFamily: type.body,
+    fontSize: 10,
+    lineHeight: 16,
+    color: '#9DACA3',
+    textAlign: 'center',
+    marginTop: 5,
+  },
+  solyChatEmptyButton: {
+    minHeight: 40,
+    borderRadius: 8,
+    backgroundColor: '#CFA055',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 17,
+  },
+  solyChatEmptyButtonText: {
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    letterSpacing: 1.3,
+    color: '#092416',
   },
   solyRequestHandle: {
     alignSelf: 'center',
