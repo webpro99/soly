@@ -28,6 +28,7 @@ export function RealMap({
   markers = [],
   apiKey = '',
   userLocation,
+  onInteractionChange,
 }: {
   dark?: boolean;
   withCompanions?: boolean;
@@ -35,6 +36,7 @@ export function RealMap({
   markers?: MapMarker[];
   apiKey?: string;
   userLocation?: { latitude: number | null; longitude: number | null };
+  onInteractionChange?: (active: boolean) => void;
 }) {
   const scene = dark ? scenes.editorial : scenes.immersive;
   const validMarkers = markers.filter(isValidMarker);
@@ -59,14 +61,26 @@ export function RealMap({
     };
   }, [center.latitude, center.longitude, cleanKey, dark, validMarkers, userLocation]);
 
+  // La carte vit dans le ScrollView principal de l ecran. Sans ces handlers, le
+  // ScrollView intercepte le multi-touch et le pincement fait defiler la page au
+  // lieu de zoomer : on lui demande de se taire tant que le doigt est sur la carte.
+  const holdParentScroll = () => onInteractionChange?.(true);
+  const releaseParentScroll = () => onInteractionChange?.(false);
+
   return (
-    <View style={[styles.map, { backgroundColor: dark ? '#11100F' : '#0C3823', borderColor: scene.border }]}>
+    <View
+      style={[styles.map, { backgroundColor: dark ? '#11100F' : '#0C3823', borderColor: scene.border }]}
+      onTouchStart={holdParentScroll}
+      onTouchEnd={releaseParentScroll}
+      onTouchCancel={releaseParentScroll}
+    >
       <WebView
         source={source}
         originWhitelist={['https://*', 'http://*']}
         javaScriptEnabled
         domStorageEnabled
         geolocationEnabled
+        nestedScrollEnabled
         setSupportMultipleWindows={false}
         startInLoadingState
         style={styles.webView}

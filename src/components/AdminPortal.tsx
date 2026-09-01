@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { useUnreadMessages } from '../hooks/useUnreadMessages';
 import {
   loadSolyAdminDashboard,
   replyToSolyConciergeRequest,
@@ -45,6 +46,7 @@ export function AdminPortal({ token, user, onLogout }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<SolyConciergeRequest | null>(null);
+  const unread = useUnreadMessages('staff');
   const [selectedStay, setSelectedStay] = useState<SolyAdminStay | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -113,7 +115,16 @@ export function AdminPortal({ token, user, onLogout }: Props) {
             {loading ? (
               <View style={styles.loading}><ActivityIndicator color="#CFA055" /><Text style={styles.loadingText}>Synchronisation CRM…</Text></View>
             ) : tab === 'requests' ? (
-              <RequestList dashboard={dashboard} refreshing={refreshing} onRefresh={() => void load()} onOpen={setSelectedRequest} />
+              <RequestList
+                dashboard={dashboard}
+                refreshing={refreshing}
+                onRefresh={() => void load()}
+                countUnreadFor={unread.countUnreadFor}
+                onOpen={(request) => {
+                  unread.markRequestSeen(request);
+                  setSelectedRequest(request);
+                }}
+              />
             ) : tab === 'stays' ? (
               <StayList stays={dashboard.stays} refreshing={refreshing} onRefresh={() => void load()} onOpen={setSelectedStay} />
             ) : (
@@ -122,7 +133,7 @@ export function AdminPortal({ token, user, onLogout }: Props) {
           </View>
 
           <View style={styles.nav}>
-            <NavButton icon="forum" label="Demandes" active={tab === 'requests'} badge={dashboard.stats.openRequests} onPress={() => setTab('requests')} />
+            <NavButton icon="forum" label="Demandes" active={tab === 'requests'} badge={unread.countUnread(dashboard.requests)} onPress={() => setTab('requests')} />
             <NavButton icon="luggage" label="Séjours" active={tab === 'stays'} onPress={() => setTab('stays')} />
             <NavButton icon="admin-panel-settings" label="Profil SOLÝ" active={tab === 'profile'} onPress={() => setTab('profile')} />
           </View>
@@ -132,6 +143,7 @@ export function AdminPortal({ token, user, onLogout }: Props) {
             request={selectedRequest}
             onClose={() => setSelectedRequest(null)}
             onUpdated={(updated) => {
+              unread.markRequestSeen(updated);
               setSelectedRequest(updated);
               setDashboard((current) => ({
                 ...current,
@@ -156,7 +168,7 @@ function StatCard({ icon, value, label }: { icon: React.ComponentProps<typeof Ma
   );
 }
 
-function RequestList({ dashboard, refreshing, onRefresh, onOpen }: { dashboard: SolyAdminDashboard; refreshing: boolean; onRefresh: () => void; onOpen: (request: SolyConciergeRequest) => void }) {
+function RequestList({ dashboard, refreshing, onRefresh, onOpen, countUnreadFor }: { dashboard: SolyAdminDashboard; refreshing: boolean; onRefresh: () => void; onOpen: (request: SolyConciergeRequest) => void; countUnreadFor: (request: SolyConciergeRequest) => number }) {
   const requests = useMemo(() => dashboard.requests.filter((item) => !['closed', 'resolved'].includes(item.status)), [dashboard.requests]);
   return (
     <ScrollView
@@ -168,6 +180,7 @@ function RequestList({ dashboard, refreshing, onRefresh, onOpen }: { dashboard: 
       {!requests.length ? <EmptyState icon="done-all" title="Aucune demande ouverte" copy="Les nouvelles sollicitations apparaîtront automatiquement ici." /> : null}
       {requests.map((request) => {
         const last = request.messages[request.messages.length - 1];
+        const pending = countUnreadFor(request);
         return (
           <TouchableOpacity key={request.id} activeOpacity={0.78} onPress={() => onOpen(request)} style={styles.requestCard}>
             <View style={styles.requestTop}>
@@ -176,6 +189,9 @@ function RequestList({ dashboard, refreshing, onRefresh, onOpen }: { dashboard: 
                 <Text numberOfLines={1} style={styles.requestClient}>{request.client.name || 'Client CRM'}</Text>
                 <Text numberOfLines={1} style={styles.requestMeta}>{request.stayCode || 'Sans séjour'} · {request.code}</Text>
               </View>
+              {pending ? (
+                <View style={styles.requestUnread}><Text style={styles.requestUnreadText}>{pending > 9 ? '9+' : pending}</Text></View>
+              ) : null}
               <StatusChip status={request.status} />
             </View>
             <Text numberOfLines={2} style={styles.requestMessage}>{last?.message || request.message}</Text>
@@ -251,7 +267,6 @@ function RequestChat({ token, request, onClose, onUpdated }: { token: string; re
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [replyAs, setReplyAs] = useState<'staff' | 'driver'>('staff');
   if (!request) return null;
 
   const send = async () => {
@@ -261,8 +276,7 @@ function RequestChat({ token, request, onClose, onUpdated }: { token: string; re
     setError('');
     try {
       const updated = await replyToSolyConciergeRequest(token, request.id, clean, {
-        sender: replyAs,
-        senderName: replyAs === 'driver' ? 'Chauffeur SOLÝ' : undefined,
+        sender: 'staff',
       });
       setDraft('');
       onUpdated(updated);
@@ -306,19 +320,6 @@ function RequestChat({ token, request, onClose, onUpdated }: { token: string; re
             })}
           </ScrollView>
           {error ? <Text style={styles.chatError}>{error}</Text> : null}
-          <View style={styles.replyIdentity}>
-            <Text style={styles.replyIdentityLabel}>RÉPONDRE EN TANT QUE</Text>
-            <View style={styles.replyIdentityChoices}>
-              <TouchableOpacity activeOpacity={0.76} onPress={() => setReplyAs('staff')} style={[styles.replyIdentityChip, replyAs === 'staff' && styles.replyIdentityChipActive]}>
-                <MaterialIcons name="diamond" size={13} color={replyAs === 'staff' ? '#092617' : '#CFA055'} />
-                <Text style={[styles.replyIdentityText, replyAs === 'staff' && styles.replyIdentityTextActive]}>ÉQUIPE SOLÝ</Text>
-              </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.76} onPress={() => setReplyAs('driver')} style={[styles.replyIdentityChip, replyAs === 'driver' && styles.replyIdentityChipActive]}>
-                <MaterialIcons name="local-taxi" size={13} color={replyAs === 'driver' ? '#092617' : '#CFA055'} />
-                <Text style={[styles.replyIdentityText, replyAs === 'driver' && styles.replyIdentityTextActive]}>CHAUFFEUR</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
           <View style={styles.composer}>
             <TextInput
               value={draft}
@@ -465,9 +466,9 @@ const styles = StyleSheet.create({
   statusChip: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 10, backgroundColor: '#F2E5C9' }, statusChipAnswered: { backgroundColor: '#DDEDE2' }, statusChipClosed: { backgroundColor: '#E7E7E4' }, statusText: { color: '#A16F17', fontFamily: 'Jost_700Bold', fontSize: 7.5, letterSpacing: .6 }, statusTextAnswered: { color: '#31754A' }, statusTextClosed: { color: '#677169' },
   stayCard: { borderRadius: 17, borderWidth: 1, borderColor: '#E0D3BC', backgroundColor: '#FFFCF6', padding: 14 }, stayTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }, stayCode: { color: '#B17E2B', fontFamily: 'Jost_700Bold', fontSize: 10, letterSpacing: 1 }, stayClient: { color: '#0A2C1B', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 21, marginTop: 3 },
   stayDetailsRow: { flexDirection: 'row', gap: 8, marginTop: 11 }, miniDetail: { flex: 1, minHeight: 52, borderRadius: 11, backgroundColor: '#F5F0E7', padding: 9, flexDirection: 'row', gap: 7, alignItems: 'center' }, miniDetailLabel: { color: '#8C958F', fontFamily: 'Jost_700Bold', fontSize: 7, letterSpacing: .8 }, miniDetailValue: { color: '#25372D', fontFamily: 'Jost_500Medium', fontSize: 10, marginTop: 2 }, stayFooter: { marginTop: 11, paddingTop: 9, borderTopWidth: 1, borderTopColor: '#EEE5D6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, stayCity: { color: '#6D7B73', fontFamily: 'Jost_400Regular', fontSize: 10 },
-  nav: { minHeight: 70, flexDirection: 'row', borderTopWidth: 1, borderTopColor: 'rgba(207,160,85,.22)', backgroundColor: '#041D10', paddingHorizontal: 8, paddingTop: 7 }, navButton: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { width: 35, height: 30, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, navIconActive: { backgroundColor: 'rgba(207,160,85,.13)' }, navLabel: { color: '#718078', fontFamily: 'Jost_500Medium', fontSize: 8 }, navLabelActive: { color: '#D2AE65' }, navBadge: { position: 'absolute', right: -5, top: -4, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: '#B85545', alignItems: 'center', justifyContent: 'center' }, navBadgeText: { color: '#FFF', fontFamily: 'Jost_700Bold', fontSize: 7 },
+  nav: { minHeight: 70, flexDirection: 'row', borderTopWidth: 1, borderTopColor: 'rgba(207,160,85,.22)', backgroundColor: '#041D10', paddingHorizontal: 8, paddingTop: 7 }, navButton: { flex: 1, alignItems: 'center', gap: 3 }, navIcon: { width: 35, height: 30, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, navIconActive: { backgroundColor: 'rgba(207,160,85,.13)' }, navLabel: { color: '#718078', fontFamily: 'Jost_500Medium', fontSize: 8 }, navLabelActive: { color: '#D2AE65' }, requestUnread: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, backgroundColor: '#B85545', alignItems: 'center', justifyContent: 'center' }, requestUnreadText: { color: '#FFF', fontFamily: 'Jost_700Bold', fontSize: 8 }, navBadge: { position: 'absolute', right: -5, top: -4, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: '#B85545', alignItems: 'center', justifyContent: 'center' }, navBadgeText: { color: '#FFF', fontFamily: 'Jost_700Bold', fontSize: 7 },
   empty: { alignItems: 'center', paddingVertical: 55, paddingHorizontal: 30 }, emptyTitle: { color: '#173528', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 22, marginTop: 10 }, emptyCopy: { color: '#7C8981', fontFamily: 'Jost_400Regular', textAlign: 'center', fontSize: 11, lineHeight: 17, marginTop: 5 },
   profileContent: { padding: 18, paddingBottom: 35 }, profileHero: { alignItems: 'center', paddingVertical: 20 }, profileAvatar: { width: 74, height: 74, borderRadius: 37, borderWidth: 2, borderColor: '#CFA055', backgroundColor: '#0A3521', alignItems: 'center', justifyContent: 'center' }, profileAvatarText: { color: '#D8B46B', fontFamily: 'Jost_700Bold', fontSize: 19 }, profileName: { color: '#0A2C1B', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 27, marginTop: 10 }, profileRole: { color: '#B78A38', fontFamily: 'Jost_700Bold', fontSize: 8, letterSpacing: 1.7, marginTop: 3 }, profileCard: { borderRadius: 16, borderWidth: 1, borderColor: '#E0D3BC', backgroundColor: '#FFFCF6', paddingHorizontal: 14 }, profileLine: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: '#EEE5D6' }, profileLineCopy: { flex: 1 }, profileLineLabel: { color: '#8B958F', fontFamily: 'Jost_500Medium', fontSize: 9 }, profileLineValue: { color: '#24372D', fontFamily: 'Jost_500Medium', fontSize: 11, marginTop: 2 }, logoutButton: { minHeight: 52, borderRadius: 14, marginTop: 15, borderWidth: 1, borderColor: '#D9AFA8', backgroundColor: '#FFF7F5', flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center' }, logoutText: { color: '#A34D41', fontFamily: 'Jost_700Bold', fontSize: 9, letterSpacing: 1.2 },
-  modalRoot: { flex: 1 }, modalSafe: { flex: 1 }, chatHeader: { minHeight: 72, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(207,160,85,.22)' }, modalClose: { width: 39, height: 39, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(207,160,85,.26)', alignItems: 'center', justifyContent: 'center' }, chatHeaderCopy: { flex: 1 }, chatTitle: { color: '#F2EBDD', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 22 }, chatSubtitle: { color: '#82948A', fontFamily: 'Jost_400Regular', fontSize: 9 }, chatScroll: { flex: 1 }, chatMessages: { padding: 14, gap: 9, paddingBottom: 20 }, chatContext: { borderRadius: 14, borderWidth: 1, borderColor: 'rgba(207,160,85,.28)', backgroundColor: 'rgba(207,160,85,.08)', padding: 12, marginBottom: 7 }, chatContextLabel: { color: '#CFA055', fontFamily: 'Jost_700Bold', fontSize: 8, letterSpacing: 1.5 }, chatContextText: { color: '#E9E3D7', fontFamily: 'Jost_400Regular', fontSize: 11.5, lineHeight: 18, marginTop: 5 }, chatContextMeta: { color: '#7F9187', fontFamily: 'Jost_400Regular', fontSize: 8.5, marginTop: 7 }, chatRow: { flexDirection: 'row' }, chatRowStaff: { justifyContent: 'flex-end' }, chatRowClient: { justifyContent: 'flex-start' }, chatBubble: { maxWidth: '86%', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 10 }, chatBubbleStaff: { backgroundColor: '#CFA055', borderBottomRightRadius: 4 }, chatBubbleClient: { backgroundColor: '#123A28', borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderBottomLeftRadius: 4 }, chatAuthor: { color: '#D9B76F', fontFamily: 'Jost_700Bold', fontSize: 8, marginBottom: 4 }, chatAuthorStaff: { color: '#17301F' }, chatMessage: { color: '#F1ECE2', fontFamily: 'Jost_400Regular', fontSize: 12, lineHeight: 18 }, chatMessageStaff: { color: '#092617' }, chatTime: { color: '#788A80', fontFamily: 'Jost_400Regular', fontSize: 7.5, marginTop: 5 }, chatTimeStaff: { color: '#426049' }, chatError: { color: '#F0B4A9', fontFamily: 'Jost_500Medium', fontSize: 10, paddingHorizontal: 15, paddingBottom: 6 }, replyIdentity: { paddingHorizontal: 13, paddingTop: 8, paddingBottom: 2, borderTopWidth: 1, borderTopColor: 'rgba(207,160,85,.16)' }, replyIdentityLabel: { color: '#7F9187', fontFamily: 'Jost_700Bold', fontSize: 7, letterSpacing: 1.3, marginBottom: 6 }, replyIdentityChoices: { flexDirection: 'row', gap: 7 }, replyIdentityChip: { minHeight: 29, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(207,160,85,.30)', paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 5 }, replyIdentityChipActive: { backgroundColor: '#CFA055', borderColor: '#CFA055' }, replyIdentityText: { color: '#CFA055', fontFamily: 'Jost_700Bold', fontSize: 7.5, letterSpacing: .7 }, replyIdentityTextActive: { color: '#092617' }, composer: { minHeight: 72, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'flex-end', gap: 9 }, composerInput: { flex: 1, minHeight: 46, maxHeight: 110, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(207,160,85,.25)', backgroundColor: '#0A2E1D', color: '#F1ECE2', fontFamily: 'Jost_400Regular', fontSize: 12, paddingHorizontal: 13, paddingVertical: 11 }, sendButton: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#CFA055', alignItems: 'center', justifyContent: 'center' }, sendButtonDisabled: { opacity: .45 },
+  modalRoot: { flex: 1 }, modalSafe: { flex: 1 }, chatHeader: { minHeight: 72, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(207,160,85,.22)' }, modalClose: { width: 39, height: 39, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(207,160,85,.26)', alignItems: 'center', justifyContent: 'center' }, chatHeaderCopy: { flex: 1 }, chatTitle: { color: '#F2EBDD', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 22 }, chatSubtitle: { color: '#82948A', fontFamily: 'Jost_400Regular', fontSize: 9 }, chatScroll: { flex: 1 }, chatMessages: { padding: 14, gap: 9, paddingBottom: 20 }, chatContext: { borderRadius: 14, borderWidth: 1, borderColor: 'rgba(207,160,85,.28)', backgroundColor: 'rgba(207,160,85,.08)', padding: 12, marginBottom: 7 }, chatContextLabel: { color: '#CFA055', fontFamily: 'Jost_700Bold', fontSize: 8, letterSpacing: 1.5 }, chatContextText: { color: '#E9E3D7', fontFamily: 'Jost_400Regular', fontSize: 11.5, lineHeight: 18, marginTop: 5 }, chatContextMeta: { color: '#7F9187', fontFamily: 'Jost_400Regular', fontSize: 8.5, marginTop: 7 }, chatRow: { flexDirection: 'row' }, chatRowStaff: { justifyContent: 'flex-end' }, chatRowClient: { justifyContent: 'flex-start' }, chatBubble: { maxWidth: '86%', borderRadius: 16, paddingHorizontal: 13, paddingVertical: 10 }, chatBubbleStaff: { backgroundColor: '#CFA055', borderBottomRightRadius: 4 }, chatBubbleClient: { backgroundColor: '#123A28', borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderBottomLeftRadius: 4 }, chatAuthor: { color: '#D9B76F', fontFamily: 'Jost_700Bold', fontSize: 8, marginBottom: 4 }, chatAuthorStaff: { color: '#17301F' }, chatMessage: { color: '#F1ECE2', fontFamily: 'Jost_400Regular', fontSize: 12, lineHeight: 18 }, chatMessageStaff: { color: '#092617' }, chatTime: { color: '#788A80', fontFamily: 'Jost_400Regular', fontSize: 7.5, marginTop: 5 }, chatTimeStaff: { color: '#426049' }, chatError: { color: '#F0B4A9', fontFamily: 'Jost_500Medium', fontSize: 10, paddingHorizontal: 15, paddingBottom: 6 }, composer: { minHeight: 72, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'flex-end', gap: 9 }, composerInput: { flex: 1, minHeight: 46, maxHeight: 110, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(207,160,85,.25)', backgroundColor: '#0A2E1D', color: '#F1ECE2', fontFamily: 'Jost_400Regular', fontSize: 12, paddingHorizontal: 13, paddingVertical: 11 }, sendButton: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#CFA055', alignItems: 'center', justifyContent: 'center' }, sendButtonDisabled: { opacity: .45 },
   sheetRoot: { flex: 1, justifyContent: 'flex-end' }, sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,18,9,.62)' }, sheet: { height: '88%', borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: '#F4EFE5', paddingTop: 8, overflow: 'hidden' }, sheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: '#CFC4B2', alignSelf: 'center', marginBottom: 7 }, sheetHeader: { paddingHorizontal: 18, paddingBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#E3D8C5' }, sheetEyebrow: { color: '#B78A38', fontFamily: 'Jost_700Bold', fontSize: 8, letterSpacing: 1.5 }, sheetTitle: { color: '#0A2C1B', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 27, marginTop: 2 }, sheetClose: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, borderColor: '#DDD2C0', alignItems: 'center', justifyContent: 'center' }, sheetContent: { padding: 15, paddingBottom: 35, gap: 12 }, detailSection: { borderRadius: 15, borderWidth: 1, borderColor: '#E0D3BC', backgroundColor: '#FFFCF6', paddingHorizontal: 13, paddingBottom: 3 }, detailSectionTitle: { color: '#B17E2B', fontFamily: 'Jost_700Bold', fontSize: 9, letterSpacing: 1.3, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#EEE5D6' }, detailLine: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 15, borderBottomWidth: 1, borderBottomColor: '#F1E9DC' }, detailLabel: { color: '#7B8880', fontFamily: 'Jost_400Regular', fontSize: 10 }, detailValue: { flex: 1, textAlign: 'right', color: '#1F3428', fontFamily: 'Jost_500Medium', fontSize: 10.5 }, notes: { color: '#35483D', fontFamily: 'Jost_400Regular', fontSize: 11, lineHeight: 17, paddingVertical: 12 },
 });

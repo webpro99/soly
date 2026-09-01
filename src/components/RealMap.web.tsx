@@ -26,6 +26,9 @@ export function RealMap({
   markers?: MapMarker[];
   apiKey?: string;
   userLocation?: { latitude: number | null; longitude: number | null };
+  // Le web n a pas le conflit de scroll natif : la prop existe pour garder la
+  // meme signature que la version native.
+  onInteractionChange?: (active: boolean) => void;
 }) {
   const fallback = cityCenters[cityKey(city)] ?? cityCenters.marrakech;
   const firstMarker = markers.find((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));

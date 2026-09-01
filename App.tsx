@@ -14,6 +14,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ActivityIndicator,
   Animated,
   AppState,
   Image,
@@ -48,6 +49,7 @@ import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
 import { AdminPortal } from './src/components/AdminPortal';
 import { useSolySession } from './src/hooks/useSolySession';
+import { useUnreadMessages } from './src/hooks/useUnreadMessages';
 import { createSolyConciergeRequest, loadSolyConciergeRequests, loadSolyExplorer, loadSolyStay, registerSolyPushToken, replyToSolyConciergeRequest, type SolyConciergeRequest, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
@@ -422,6 +424,10 @@ export default function App() {
   const [dynamicStay, setDynamicStay] = useState<SolyStay | null>(null);
   const [dynamicExplorer, setDynamicExplorer] = useState<SolyExplorerGuide | null>(null);
   const [explorerLoading, setExplorerLoading] = useState(false);
+  // Vrai tant qu un doigt touche la carte : le ScrollView principal se fige pour
+  // lui laisser le pincement (sinon le zoom fait defiler la page).
+  const [mapInteracting, setMapInteracting] = useState(false);
+  const [explorerError, setExplorerError] = useState('');
   const explorerRequestKey = useRef('');
   const [selectedEmergency, setSelectedEmergency] = useState('');
   const [driverChatOpen, setDriverChatOpen] = useState(false);
@@ -481,6 +487,7 @@ export default function App() {
     if (explorerRequestKey.current === requestKey) return;
     explorerRequestKey.current = requestKey;
     setExplorerLoading(true);
+    setExplorerError('');
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
       .then((position) => loadSolyExplorer(session.token!, {
         city: dynamicStay?.city || liveWeather.city,
@@ -489,9 +496,19 @@ export default function App() {
       }))
       .then(setDynamicExplorer)
       .catch(() => loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city }).then(setDynamicExplorer))
-      .catch(() => undefined)
+      .catch((reason) => {
+        // Le guide statique reste affiche en secours, mais on dit desormais pourquoi
+        // l IA n a pas repondu au lieu d avaler l erreur en silence.
+        setExplorerError(reason instanceof Error ? reason.message : 'Guide IA momentanement indisponible.');
+      })
       .finally(() => setExplorerLoading(false));
   }, [screen, session.token, dynamicStay?.city, liveWeather.city, dynamicExplorer, explorerLoading]);
+
+  // Filet de securite : si l ecran change pendant que le doigt est sur la carte,
+  // on relache le ScrollView pour ne pas le laisser fige.
+  useEffect(() => {
+    if (screen !== 'explore' && mapInteracting) setMapInteracting(false);
+  }, [screen, mapInteracting]);
 
   if (!fontsLoaded || !launchComplete || session.loading) {
     return <SolyLoadingScreen />;
@@ -600,7 +617,7 @@ export default function App() {
             screen !== 'home' && screen !== 'weather' && screen !== 'stay' && screen !== 'currency' && screen !== 'explore' && styles.scrollContentWithDock,
           ]}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={screen !== 'weather' && screen !== 'currency'}
+          scrollEnabled={screen !== 'weather' && screen !== 'currency' && !mapInteracting}
           keyboardShouldPersistTaps="handled"
         >
           {screen === 'home' ? (
@@ -624,7 +641,7 @@ export default function App() {
           ) : screen === 'companions' ? (
             <CompanionsScreen navigate={navigate} shareLocation={shareLocation} />
           ) : screen === 'explore' ? (
-            <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} mapApiKey={session.bootstrap?.settings.googleMapsApiKey} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} />
+            <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} error={explorerError} mapApiKey={session.bootstrap?.settings.googleMapsApiKey} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} onMapInteraction={setMapInteracting} />
           ) : screen === 'currency' ? (
             <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} onClose={goBack} />
           ) : screen === 'sos' ? (
@@ -801,9 +818,9 @@ function HomeScreen({
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [solyRequestOpen, setSolyRequestOpen] = useState(false);
   const [solyInitialMode, setSolyInitialMode] = useState<'request' | 'chat'>('request');
-  const [solyIncomingCount, setSolyIncomingCount] = useState(0);
-  const seenSolyMessageIds = useRef(new Set<string>());
-  const latestSolyIncomingIds = useRef<string[]>([]);
+  const [solyRequests, setSolyRequests] = useState<SolyConciergeRequest[]>([]);
+  const unreadSoly = useUnreadMessages('client');
+  const solyIncomingCount = unreadSoly.countUnread(solyRequests);
   const [homeEmergencyOpen, setHomeEmergencyOpen] = useState(false);
   const homeModuleRows = useMemo(() => chunkArray(homeModules, 3), []);
 
@@ -812,12 +829,7 @@ function HomeScreen({
     const loadInbox = () => loadSolyConciergeRequests(token)
       .then(({ requests }) => {
         if (!mounted) return;
-        const incomingIds = requests.flatMap((item) => {
-          const lastMessage = item.messages[item.messages.length - 1];
-          return lastMessage && lastMessage.sender !== 'client' ? [lastMessage.id] : [];
-        });
-        latestSolyIncomingIds.current = incomingIds;
-        setSolyIncomingCount(incomingIds.filter((id) => !seenSolyMessageIds.current.has(id)).length);
+        setSolyRequests(requests);
       })
       .catch(() => undefined);
     void loadInbox();
@@ -828,10 +840,11 @@ function HomeScreen({
     };
   }, [token]);
 
+  // Ouvrir le chat marque toutes les conversations comme lues : le compteur
+  // tombe a zero et la pastille rouge disparait, y compris apres redemarrage.
   const markSolyMessagesSeen = useCallback(() => {
-    latestSolyIncomingIds.current.forEach((id) => seenSolyMessageIds.current.add(id));
-    setSolyIncomingCount(0);
-  }, []);
+    solyRequests.forEach((request) => unreadSoly.markRequestSeen(request));
+  }, [solyRequests, unreadSoly]);
 
   const wakeSoly = () => {
     if (awake) return;
@@ -934,24 +947,6 @@ function HomeScreen({
             })}
           </View>
         ))}
-      </View>
-
-      <View style={styles.homeDirectChat}>
-        <Text style={styles.homeDirectChatPrompt}>Vous préférez échanger directement ?</Text>
-        <TouchableOpacity
-          activeOpacity={0.72}
-          onPress={() => {
-            Vibration.vibrate(7);
-            markSolyMessagesSeen();
-            setSolyInitialMode('chat');
-            setSolyRequestOpen(true);
-          }}
-          style={styles.homeDirectChatButton}
-        >
-          <MaterialIcons name="chat-bubble-outline" size={14} color="#CFA055" />
-          <Text style={styles.homeDirectChatText}>OUVRIR LE CHAT</Text>
-          {solyIncomingCount > 0 ? <View style={styles.homeDirectChatCount}><Text style={styles.homeDirectChatCountText}>{solyIncomingCount}</Text></View> : null}
-        </TouchableOpacity>
       </View>
 
       <View style={styles.homeSosRail}>
@@ -3046,20 +3041,24 @@ function ExploreScreen({
   city,
   guide: dynamicGuide,
   loading,
+  error,
   mapApiKey,
   onClose,
   onSelect,
   notify,
   shareLocation,
+  onMapInteraction,
 }: {
   city: string;
   guide: SolyExplorerGuide | null;
   loading: boolean;
+  error?: string;
   mapApiKey?: string;
   onClose: () => void;
   onSelect: (spot: ExplorerActivity) => void;
   notify: (message: string, pattern?: number | number[]) => void;
   shareLocation: (recipient: 'chauffeur' | 'groupe') => void;
+  onMapInteraction?: (active: boolean) => void;
 }) {
   const scene = scenes.editorial;
   const guide = (dynamicGuide as ExplorerGuide | null) || explorerGuideForCity(city);
@@ -3081,9 +3080,19 @@ function ExploreScreen({
       </View>
       <View style={styles.atmosphereRule} />
 
-      {loading ? <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text> : null}
+      {loading ? (
+        <View style={styles.explorerAiRow}>
+          <ActivityIndicator size="small" color="#D2B15B" />
+          <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.explorerAiRow}>
+          <MaterialIcons name="cloud-off" size={14} color="#E0A99B" />
+          <Text style={styles.explorerAiError}>{error}</Text>
+        </View>
+      ) : null}
 
-      <MiniMap dark apiKey={mapApiKey} city={guide.city} markers={activityMarkers} userLocation={guide.userLocation} />
+      <MiniMap dark apiKey={mapApiKey} city={guide.city} markers={activityMarkers} userLocation={guide.userLocation} onInteractionChange={onMapInteraction} />
 
       <Text style={styles.explorerIntro}>
         Vous êtes dans la <Text style={styles.explorerAccentText}>{guide.district}</Text>. {guide.note}
@@ -3608,6 +3617,7 @@ function MiniMap({
   markers = [],
   apiKey,
   userLocation,
+  onInteractionChange,
 }: {
   dark?: boolean;
   withCompanions?: boolean;
@@ -3615,8 +3625,9 @@ function MiniMap({
   markers?: ExplorerActivity[];
   apiKey?: string;
   userLocation?: { latitude: number | null; longitude: number | null };
+  onInteractionChange?: (active: boolean) => void;
 }) {
-  return <RealMap apiKey={apiKey} dark={dark} withCompanions={withCompanions} city={city} markers={markers} userLocation={userLocation} />;
+  return <RealMap apiKey={apiKey} dark={dark} withCompanions={withCompanions} city={city} markers={markers} userLocation={userLocation} onInteractionChange={onInteractionChange} />;
 }
 
 function EmergencyModal({
@@ -5016,45 +5027,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     lineHeight: 10,
     textAlign: 'center',
-  },
-  homeDirectChat: {
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 17,
-  },
-  homeDirectChatPrompt: {
-    fontFamily: 'EBGaramond_400Regular_Italic',
-    fontSize: 12,
-    color: '#AEBBAF',
-  },
-  homeDirectChatButton: {
-    minHeight: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(207,160,85,0.5)',
-    paddingHorizontal: 5,
-  },
-  homeDirectChatText: {
-    fontFamily: type.bodyMedium,
-    fontSize: 9,
-    letterSpacing: 1.2,
-    color: '#CFA055',
-  },
-  homeDirectChatCount: {
-    minWidth: 17,
-    height: 17,
-    borderRadius: 9,
-    paddingHorizontal: 4,
-    backgroundColor: '#C7655B',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  homeDirectChatCountText: {
-    fontFamily: type.bodyBold,
-    fontSize: 7,
-    color: '#FFF',
   },
   solyRequestRoot: {
     flex: 1,
@@ -7435,12 +7407,27 @@ const styles = StyleSheet.create({
     marginTop: 12,
     backgroundColor: 'rgba(207,160,85,.18)',
   },
+  explorerAiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 2,
+  },
   explorerAiLoading: {
     color: '#D2B15B',
     fontFamily: type.body,
     fontSize: 11,
     letterSpacing: 1,
     textAlign: 'center',
+  },
+  explorerAiError: {
+    color: '#E0A99B',
+    fontFamily: type.body,
+    fontSize: 10.5,
+    letterSpacing: 0.6,
+    textAlign: 'center',
+    flexShrink: 1,
   },
   explorerHeader: {
     minHeight: 58,

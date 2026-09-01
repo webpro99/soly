@@ -40,6 +40,7 @@ export type SolyBootstrap = {
     apiVersion: string;
     googleMapsApiKey?: string;
     googleMapsConfigured?: boolean;
+    openaiConfigured?: boolean;
   };
   catalog: {
     services: Array<Record<string, unknown>>;

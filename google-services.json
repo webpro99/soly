@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "971242419774",
+    "project_id": "solyvents",
+    "storage_bucket": "solyvents.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:971242419774:android:710d2adacfad469ee8836f",
+        "android_client_info": {
+          "package_name": "com.soly.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWijyYb57mBXy8tNMAiMQ393oWzTQ13yE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
