@@ -13,13 +13,14 @@ export type SolyUser = {
   email: string;
   phone: string;
   memberSince: string;
-  role?: 'client' | 'staff';
+  role?: 'client' | 'staff' | 'driver';
   permissions?: string[];
   client: {
     id: number;
     code: string;
     source: 'crm';
   };
+  provider?: { id: number; code: string; name: string; category: string };
   loyalty?: {
     level?: string;
     level_name?: string;
@@ -152,6 +153,7 @@ export type SolyAdminStay = {
   occasion: string;
   programDays: number;
   client: { id: number; code: string; name: string; email: string; phone: string };
+  driver?: { id: number; name: string; phone: string };
   notes: string;
   updatedAt: string;
 };
@@ -160,6 +162,28 @@ export type SolyAdminDashboard = {
   stats: { openRequests: number; stays: number; clients: number };
   requests: SolyConciergeRequest[];
   stays: SolyAdminStay[];
+  updatedAt: string;
+};
+
+export type SolyDriverStay = {
+  id: number;
+  code: string;
+  status: string;
+  arrivalDate: string;
+  departureDate: string;
+  guests: number;
+  city: string;
+  arrivalMode: string;
+  client: { id: number; code: string; name: string; email: string; phone: string };
+  days: Array<Record<string, unknown>>;
+  roadbook: Record<string, unknown>;
+  assignedAt: string;
+};
+
+export type SolyDriverDashboard = {
+  provider: { id: number; code: string; name: string; phone: string };
+  stays: SolyDriverStay[];
+  requests: SolyConciergeRequest[];
   updatedAt: string;
 };
 
@@ -228,15 +252,6 @@ export async function loginSoly(email: string, password: string): Promise<AuthRe
   return result;
 }
 
-export async function registerSoly(input: { name: string; email: string; phone: string; password: string }): Promise<AuthResponse> {
-  const result = await apiRequest<AuthResponse>('/auth/register', {
-    method: 'POST',
-    body: JSON.stringify({ ...input, name: input.name.trim(), email: input.email.trim(), phone: input.phone.trim() }),
-  });
-  await storageSet(result.token);
-  return result;
-}
-
 export async function logoutSoly(token: string | null): Promise<void> {
   try {
     if (token) await apiRequest<null>('/auth/logout', { method: 'POST' }, token);
@@ -290,4 +305,8 @@ export function replyToSolyConciergeRequest(
 
 export function loadSolyAdminDashboard(token: string): Promise<SolyAdminDashboard> {
   return apiRequest('/admin/dashboard', {}, token);
+}
+
+export function loadSolyDriverDashboard(token: string): Promise<SolyDriverDashboard> {
+  return apiRequest('/driver/dashboard', {}, token);
 }

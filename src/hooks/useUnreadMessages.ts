@@ -16,7 +16,7 @@ import type { SolyConciergeMessage, SolyConciergeRequest } from '../api/solyApi'
 type SeenMap = Record<string, string>;
 
 /** Cote client on compte ce qui vient de SOLY ; cote admin ce qui vient du client. */
-export type UnreadAudience = 'client' | 'staff';
+export type UnreadAudience = 'client' | 'staff' | 'driver';
 
 function isIncoming(message: SolyConciergeMessage, audience: UnreadAudience) {
   return audience === 'client'

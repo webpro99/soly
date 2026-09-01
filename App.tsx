@@ -48,6 +48,7 @@ import { RealMap } from './src/components/RealMap';
 import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
 import { AdminPortal } from './src/components/AdminPortal';
+import { DriverPortal } from './src/components/DriverPortal';
 import { useSolySession } from './src/hooks/useSolySession';
 import { useUnreadMessages } from './src/hooks/useUnreadMessages';
 import { createSolyConciergeRequest, loadSolyConciergeRequests, loadSolyExplorer, loadSolyStay, registerSolyPushToken, replyToSolyConciergeRequest, type SolyConciergeRequest, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
@@ -450,14 +451,14 @@ export default function App() {
 
   useEffect(() => {
     if (!session.token || !session.user) return;
-    if (session.user.role === 'staff') {
-      setDynamicStay(null);
-      return;
-    }
     let mounted = true;
-    loadSolyStay(session.token)
-      .then((stay) => mounted && setDynamicStay(stay?.id ? stay : null))
-      .catch(() => mounted && setDynamicStay(null));
+    if (session.user.role === 'staff' || session.user.role === 'driver') {
+      setDynamicStay(null);
+    } else {
+      loadSolyStay(session.token)
+        .then((stay) => mounted && setDynamicStay(stay?.id ? stay : null))
+        .catch(() => mounted && setDynamicStay(null));
+    }
 
     if (Platform.OS !== 'web') {
       (async () => {
@@ -520,13 +521,16 @@ export default function App() {
         submitting={session.submitting}
         brandName={session.bootstrap?.brand.name}
         onLogin={session.login}
-        onRegister={session.register}
       />
     );
   }
 
   if (session.user.role === 'staff') {
     return <AdminPortal token={session.token!} user={session.user} onLogout={session.logout} />;
+  }
+
+  if (session.user.role === 'driver') {
+    return <DriverPortal token={session.token!} user={session.user} onLogout={session.logout} />;
   }
 
   const navigate = (next: ModuleKey, vibration = 6) => {

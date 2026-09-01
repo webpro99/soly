@@ -3,7 +3,6 @@ import {
   loadSolyBootstrap,
   loginSoly,
   logoutSoly,
-  registerSoly,
   restoreSolySession,
   type SolyBootstrap,
   type SolyUser,
@@ -43,17 +42,6 @@ export function useSolySession() {
     }
   }, []);
 
-  const register = useCallback(async (input: { name: string; email: string; phone: string; password: string }) => {
-    setSubmitting(true);
-    try {
-      const result = await registerSoly(input);
-      setToken(result.token);
-      setUser(result.user);
-    } finally {
-      setSubmitting(false);
-    }
-  }, []);
-
   const logout = useCallback(async () => {
     setSubmitting(true);
     try {
@@ -65,5 +53,5 @@ export function useSolySession() {
     }
   }, [token]);
 
-  return { loading, submitting, token, user, bootstrap, login, register, logout };
+  return { loading, submitting, token, user, bootstrap, login, logout };
 }

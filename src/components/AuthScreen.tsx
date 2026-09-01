@@ -20,16 +20,11 @@ type Props = {
   submitting: boolean;
   brandName?: string;
   onLogin: (email: string, password: string) => Promise<void>;
-  onRegister: (input: { name: string; email: string; phone: string; password: string }) => Promise<void>;
 };
 
-export function AuthScreen({ submitting, brandName = 'SOLÝ', onLogin, onRegister }: Props) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [name, setName] = useState('');
+export function AuthScreen({ submitting, brandName = 'SOLÝ', onLogin }: Props) {
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [secure, setSecure] = useState(true);
   const [error, setError] = useState('');
 
@@ -39,19 +34,8 @@ export function AuthScreen({ submitting, brandName = 'SOLÝ', onLogin, onRegiste
       setError('Email et mot de passe requis.');
       return;
     }
-    if (mode === 'register') {
-      if (!name.trim() || password.length < 8) {
-        setError('Nom requis et mot de passe de 8 caractères minimum.');
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError('Les mots de passe ne correspondent pas.');
-        return;
-      }
-    }
     try {
-      if (mode === 'login') await onLogin(email, password);
-      else await onRegister({ name, email, phone, password });
+      await onLogin(email, password);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Connexion impossible.');
     }
@@ -66,35 +50,10 @@ export function AuthScreen({ submitting, brandName = 'SOLÝ', onLogin, onRegiste
           <Text style={styles.tagline}>VOTRE MAJORDOME PRIVÉ</Text>
 
           <View style={styles.card}>
-            <View style={styles.tabs}>
-              {(['login', 'register'] as const).map((item) => (
-                <TouchableOpacity
-                  key={item}
-                  onPress={() => {
-                    setMode(item);
-                    setError('');
-                  }}
-                  style={[styles.tab, mode === item && styles.tabActive]}
-                >
-                  <Text style={[styles.tabText, mode === item && styles.tabTextActive]}>
-                    {item === 'login' ? 'CONNEXION' : 'CRÉER UN COMPTE'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.title}>{mode === 'login' ? 'Heureux de vous revoir' : 'Rejoignez SOLÝ'}</Text>
-            <Text style={styles.subtitle}>
-              {mode === 'login' ? 'Retrouvez votre séjour et vos avantages.' : 'Votre profil sera créé automatiquement dans notre CRM.'}
-            </Text>
-
-            {mode === 'register' ? (
-              <AuthInput icon="person-outline" placeholder="Nom complet" value={name} onChangeText={setName} />
-            ) : null}
+            <Text style={styles.accessLabel}>ACCÈS SÉCURISÉ</Text>
+            <Text style={styles.title}>Heureux de vous revoir</Text>
+            <Text style={styles.subtitle}>Connectez-vous avec les accès transmis par l’équipe SOLÝ.</Text>
             <AuthInput icon="mail-outline" placeholder="Adresse email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
-            {mode === 'register' ? (
-              <AuthInput icon="phone-iphone" placeholder="Téléphone / WhatsApp" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-            ) : null}
             <View style={styles.inputWrap}>
               <MaterialIcons name="lock-outline" size={20} color="#CDA85B" />
               <TextInput
@@ -110,20 +69,10 @@ export function AuthScreen({ submitting, brandName = 'SOLÝ', onLogin, onRegiste
                 <MaterialIcons name={secure ? 'visibility' : 'visibility-off'} size={20} color="#8E9A93" />
               </TouchableOpacity>
             </View>
-            {mode === 'register' ? (
-              <AuthInput
-                icon="verified-user"
-                placeholder="Confirmer le mot de passe"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-              />
-            ) : null}
-
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <TouchableOpacity disabled={submitting} onPress={() => void submit()} activeOpacity={0.82} style={[styles.button, submitting && styles.buttonDisabled]}>
-              {submitting ? <ActivityIndicator color="#082719" /> : <Text style={styles.buttonText}>{mode === 'login' ? 'SE CONNECTER' : 'CRÉER MON COMPTE'}</Text>}
+              {submitting ? <ActivityIndicator color="#082719" /> : <Text style={styles.buttonText}>SE CONNECTER</Text>}
             </TouchableOpacity>
             <Text style={styles.privacy}>Connexion chiffrée · vos données restent confidentielles</Text>
           </View>
@@ -151,11 +100,7 @@ const styles = StyleSheet.create({
   brand: { color: '#D6B96F', fontFamily: 'Marcellus_400Regular', fontSize: 35, letterSpacing: 7 },
   tagline: { color: '#D9E2DC', fontFamily: 'Jost_500Medium', fontSize: 10, letterSpacing: 3.6, marginTop: 7, marginBottom: 30 },
   card: { width: '100%', maxWidth: 430, borderWidth: 1, borderColor: 'rgba(214,185,111,.3)', backgroundColor: 'rgba(5,31,20,.94)', borderRadius: 26, padding: 22 },
-  tabs: { flexDirection: 'row', borderRadius: 13, padding: 4, backgroundColor: 'rgba(0,0,0,.24)', marginBottom: 24 },
-  tab: { flex: 1, paddingVertical: 11, alignItems: 'center', borderRadius: 10 },
-  tabActive: { backgroundColor: '#CDA85B' },
-  tabText: { color: '#8E9A93', fontFamily: 'Jost_700Bold', fontSize: 10, letterSpacing: 1 },
-  tabTextActive: { color: '#082719' },
+  accessLabel: { color: '#CDA85B', fontFamily: 'Jost_700Bold', fontSize: 9, letterSpacing: 2.4, textAlign: 'center', marginBottom: 10 },
   title: { color: '#F4EFE5', fontFamily: 'CormorantGaramond_600SemiBold', fontSize: 28, textAlign: 'center' },
   subtitle: { color: '#9EAAA3', fontFamily: 'Jost_400Regular', fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 6, marginBottom: 20 },
   inputWrap: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 11, borderWidth: 1, borderColor: 'rgba(205,168,91,.25)', borderRadius: 14, backgroundColor: 'rgba(255,255,255,.035)', paddingHorizontal: 15, marginBottom: 12 },

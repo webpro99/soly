@@ -375,6 +375,8 @@ function StayDetails({ stay, onClose }: { stay: SolyAdminStay | null; onClose: (
               <DetailLine label="Chambres / nuits" value={`${stay.rooms || 0} / ${stay.nights || 0}`} />
               <DetailLine label="Mode d’arrivée" value={stay.arrivalMode || '—'} />
               <DetailLine label="Véhicule" value={stay.vehicle || 'Sélection automatique'} />
+              <DetailLine label="Chauffeur assigné" value={stay.driver?.name || 'À assigner dans le CRM'} />
+              {stay.driver?.phone ? <DetailLine label="Téléphone chauffeur" value={stay.driver.phone} /> : null}
             </DetailSection>
             <DetailSection title="Finance & opérations">
               <DetailLine label="Montant total" value={money(stay.totalAmount)} />
