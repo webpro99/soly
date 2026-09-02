@@ -440,6 +440,18 @@ export default function App() {
   const sceneName = modules.find((item) => item.key === screen)?.scene ?? screenScene(screen);
   const scene = scenes[sceneName];
   const isLight = sceneName === 'transactional';
+  const refreshClientStay = useCallback(async () => {
+    if (!session.token || !session.user || session.user.role === 'staff' || session.user.role === 'driver') {
+      setDynamicStay(null);
+      return;
+    }
+    try {
+      const stay = await loadSolyStay(session.token);
+      setDynamicStay(stay?.id ? stay : null);
+    } catch {
+      setDynamicStay(null);
+    }
+  }, [session.token, session.user?.id, session.user?.role]);
 
   useEffect(() => {
     if (!fontsLoaded) return;
@@ -451,14 +463,8 @@ export default function App() {
 
   useEffect(() => {
     if (!session.token || !session.user) return;
-    let mounted = true;
-    if (session.user.role === 'staff' || session.user.role === 'driver') {
-      setDynamicStay(null);
-    } else {
-      loadSolyStay(session.token)
-        .then((stay) => mounted && setDynamicStay(stay?.id ? stay : null))
-        .catch(() => mounted && setDynamicStay(null));
-    }
+    if (session.user.role === 'staff' || session.user.role === 'driver') setDynamicStay(null);
+    else void refreshClientStay();
 
     if (Platform.OS !== 'web') {
       (async () => {
@@ -479,8 +485,15 @@ export default function App() {
         await registerSolyPushToken(session.token!, pushToken, Platform.OS);
       })().catch(() => undefined);
     }
-    return () => { mounted = false; };
-  }, [session.token, session.user?.id]);
+  }, [session.token, session.user?.id, refreshClientStay]);
+
+  useEffect(() => {
+    if (!session.token || session.user?.role !== 'client') return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshClientStay();
+    });
+    return () => subscription.remove();
+  }, [session.token, session.user?.role, refreshClientStay]);
 
   useEffect(() => {
     if (screen !== 'explore' || !session.token || explorerLoading || dynamicExplorer) return;
@@ -655,7 +668,7 @@ export default function App() {
           ) : screen === 'formalities' ? (
             <FormalitiesScreen notify={notify} />
           ) : screen === 'driver' ? (
-            <DriverScreen navigate={navigate} notify={notify} shareLocation={shareLocation} />
+            <DriverScreen stay={dynamicStay} shareLocation={shareLocation} onOpenDriverChat={() => setDriverChatOpen(true)} />
           ) : screen === 'chat' ? (
             <ChatScreen notify={notify} />
           ) : (
@@ -727,7 +740,7 @@ export default function App() {
             notify('Protocole SOLÝ activé', [12, 30, 12]);
           }}
         />
-        {driverChatOpen ? <DriverContactModal onClose={() => setDriverChatOpen(false)} /> : null}
+        {driverChatOpen ? <DriverContactModal token={session.token!} stay={dynamicStay} onClose={() => setDriverChatOpen(false)} /> : null}
         {messagesOpen ? <MessageCenterOverlay onClose={() => setMessagesOpen(false)} notify={notify} /> : null}
           </SafeAreaView>
         </LinearGradient>
@@ -2482,8 +2495,7 @@ function StayScreen({
   const [open, setOpen] = useState(0);
   const [locatorOpen, setLocatorOpen] = useState(false);
   const visibleDays = normalizeStayDays(stay);
-  const roadbook = (stay?.roadbook || {}) as Record<string, any>;
-  const driver = roadbook.driver || roadbook.chauffeur || roadbook.transport?.driver || null;
+  const driver = stay?.driver || null;
 
   return (
     <View style={[styles.stayLayerScreen, locatorOpen && styles.stayLayerScreenExpanded]}>
@@ -2504,13 +2516,13 @@ function StayScreen({
         {driver ? <View style={styles.stayDriverCard}>
           <View style={styles.driverArrivalBadge}>
             <View style={styles.driverArrivalBadgeDot} />
-            <Text style={styles.driverArrivalBadgeText}>{String(driver.eta || driver.arrival || 'CHAUFFEUR')}</Text>
+            <Text style={styles.driverArrivalBadgeText}>CHAUFFEUR ASSIGNÉ</Text>
           </View>
           <Text style={styles.stayDriverHeadline}>
-            <Text style={styles.stayDriverName}>{String(driver.name || driver.driver_name || 'Votre chauffeur')}</Text>
+            <Text style={styles.stayDriverName}>{driver.name || 'Votre chauffeur'}</Text>
           </Text>
-          <Text style={styles.stayDriverRoute}>{String(driver.route || driver.pickup || '')}</Text>
-          <Text style={styles.stayDriverCar}>{String(driver.vehicle || driver.car || '')} {driver.plate ? ` · ${driver.plate}` : ''}</Text>
+          <Text style={styles.stayDriverRoute}>{driver.company || 'Chauffeur privé SOLÝ'}</Text>
+          <Text style={styles.stayDriverCar}>{driver.vehicle || 'Véhicule confirmé par SOLÝ'} {driver.plate ? ` · ${driver.plate}` : ''}</Text>
 
           <View style={styles.driverArrivalActions}>
             <TouchableOpacity
@@ -2616,34 +2628,63 @@ function StaticRouteMap() {
   );
 }
 
-function DriverContactModal({ onClose }: { onClose: () => void }) {
+function DriverContactModal({ token, stay, onClose }: { token: string; stay: SolyStay | null; onClose: () => void }) {
   const [draft, setDraft] = useState('');
-  const [messages, setMessages] = useState([
-    {
-      id: 'driver-1',
-      from: 'them',
-      text: 'Bonjour Thibaut, je suis votre chauffeur SOLÝ. Je vous attends à la sortie des arrivées.',
-      time: 'Aujourd’hui · 19h42',
-    },
-    {
-      id: 'driver-2',
-      from: 'me',
-      text: 'D’accord',
-      time: 'Aujourd’hui · 19h42',
-    },
-  ]);
+  const [request, setRequest] = useState<SolyConciergeRequest | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const driver = stay?.driver || null;
 
-  const sendDriverMessage = (text = draft.trim()) => {
+  const loadDriverConversation = useCallback(async (showLoader = false) => {
+    if (!driver || !stay) {
+      setRequest(null);
+      setLoading(false);
+      return;
+    }
+    if (showLoader) setLoading(true);
+    try {
+      const response = await loadSolyConciergeRequests(token);
+      const conversation = response.requests.find((item) =>
+        (driver.chatRequestId > 0 && item.id === driver.chatRequestId)
+        || (item.channel === 'driver_chat' && item.stayId === stay.id && (!item.providerId || item.providerId === driver.id)),
+      );
+      setRequest(conversation || null);
+      setError(conversation ? '' : 'La conversation chauffeur est en cours d’activation.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'La conversation est momentanément indisponible.');
+    } finally {
+      setLoading(false);
+    }
+  }, [driver?.chatRequestId, driver?.id, stay?.id, token]);
+
+  useEffect(() => {
+    void loadDriverConversation(true);
+    const timer = setInterval(() => void loadDriverConversation(), 15000);
+    return () => clearInterval(timer);
+  }, [loadDriverConversation]);
+
+  const sendDriverMessage = async (text = draft.trim()) => {
     const clean = text.trim();
-    if (!clean) return;
-
-    setMessages((current) => [
-      ...current,
-      { id: `driver-${Date.now()}`, from: 'me', text: clean, time: 'maintenant' },
-    ]);
-    setDraft('');
-    Vibration.vibrate(8);
+    if (!clean || !request || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      const updated = await replyToSolyConciergeRequest(token, request.id, clean);
+      setRequest(updated);
+      setDraft('');
+      Vibration.vibrate(8);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Le message n’a pas pu être envoyé.');
+    } finally {
+      setSending(false);
+    }
   };
+
+  const messages = request?.messages || [];
+  const driverName = driver?.name || 'Votre chauffeur';
+  const driverInitials = userInitials(driverName);
+  const vehicleLine = [driver?.vehicle, driver?.plate].filter(Boolean).join(' · ') || driver?.company || 'Chauffeur privé SOLÝ';
 
   return (
     <View style={styles.contactChatRoot}>
@@ -2659,41 +2700,46 @@ function DriverContactModal({ onClose }: { onClose: () => void }) {
 
         <View style={styles.contactChatProfile}>
           <View style={styles.contactChatAvatar}>
-            <Text style={styles.contactChatAvatarText}>Y</Text>
-            <View style={styles.contactChatOnlineDot} />
+            <Text style={styles.contactChatAvatarText}>{driverInitials}</Text>
+            {driver ? <View style={styles.contactChatOnlineDot} /> : null}
           </View>
           <View>
-            <Text style={styles.contactChatName}>Youssef B.</Text>
-            <Text style={styles.contactChatConnected}>Connecté</Text>
+            <Text style={styles.contactChatName}>{driverName}</Text>
+            <Text style={styles.contactChatConnected}>{driver ? 'Chauffeur assigné à votre séjour' : 'Aucun chauffeur assigné'}</Text>
           </View>
         </View>
 
         <View style={styles.contactChatCarBar}>
-          <Text style={styles.contactChatCar}>MERCEDES CLASSE V · 12345 - A</Text>
-          <Text style={styles.contactChatEta}>ARRIVÉE DANS 8 MIN</Text>
+          <Text style={styles.contactChatCar}>{vehicleLine.toUpperCase()}</Text>
+          {driver?.phone ? <TouchableOpacity onPress={() => void Linking.openURL(`tel:${driver.phone}`)}><Text style={styles.contactChatEta}>APPELER</Text></TouchableOpacity> : null}
         </View>
 
         <Text style={styles.contactChatNotice}>
-          Position de Youssef partagée en direct — arrivée estimée dans 8 min.
+          {driver ? `Échange privé avec ${driverName} pour le séjour ${stay?.code || ''}.` : 'Le chauffeur apparaîtra ici dès que SOLÝ l’aura assigné à votre séjour.'}
         </Text>
 
         <ScrollView contentContainerStyle={styles.contactChatMessages} showsVerticalScrollIndicator={false}>
+          {loading ? <ActivityIndicator color="#CFA055" /> : null}
+          {!loading && !messages.length ? <Text style={styles.contactChatNotice}>{error || 'Aucun message pour le moment.'}</Text> : null}
           {messages.map((message) => {
-            const mine = message.from === 'me';
+            const mine = message.sender === 'client';
             return (
               <View key={message.id} style={[styles.contactChatMessageRow, mine ? styles.contactChatMessageRowMine : styles.contactChatMessageRowDriver]}>
                 <View style={[styles.contactChatBubble, mine ? styles.contactChatBubbleMine : styles.contactChatBubbleDriver]}>
-                  <Text style={styles.contactChatMessageText}>{message.text}</Text>
-                  <Text style={styles.contactChatMessageTime}>{message.time}</Text>
+                  {!mine && message.senderName ? <Text style={styles.contactChatConnected}>{message.senderName}</Text> : null}
+                  <Text style={styles.contactChatMessageText}>{message.message}</Text>
+                  <Text style={styles.contactChatMessageTime}>{formatSolyMessageTime(message.createdAt)}</Text>
                 </View>
               </View>
             );
           })}
         </ScrollView>
 
+        {error && messages.length ? <Text style={styles.contactChatNotice}>{error}</Text> : null}
+
         <View style={styles.contactChatQuickReplies}>
           {['Je suis en retard', 'Changer le lieu', "J’arrive"].map((reply) => (
-            <TouchableOpacity key={reply} activeOpacity={0.78} onPress={() => sendDriverMessage(reply)} style={styles.contactChatQuickReply}>
+            <TouchableOpacity key={reply} activeOpacity={0.78} disabled={!request || sending} onPress={() => void sendDriverMessage(reply)} style={[styles.contactChatQuickReply, (!request || sending) && { opacity: 0.45 }]}>
               <Text style={styles.contactChatQuickReplyText}>{reply}</Text>
             </TouchableOpacity>
           ))}
@@ -2703,13 +2749,14 @@ function DriverContactModal({ onClose }: { onClose: () => void }) {
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            onSubmitEditing={() => sendDriverMessage()}
+            onSubmitEditing={() => void sendDriverMessage()}
+            editable={Boolean(request) && !sending}
             placeholder="Écrire un message..."
             placeholderTextColor="#879A8D"
             style={styles.contactChatInput}
           />
-          <TouchableOpacity activeOpacity={0.78} onPress={() => sendDriverMessage()} style={styles.contactChatSend}>
-            <MaterialIcons name="chevron-right" size={23} color="#092416" />
+          <TouchableOpacity activeOpacity={0.78} disabled={!request || sending} onPress={() => void sendDriverMessage()} style={[styles.contactChatSend, (!request || sending) && { opacity: 0.45 }]}>
+            {sending ? <ActivityIndicator size="small" color="#092416" /> : <MaterialIcons name="chevron-right" size={23} color="#092416" />}
           </TouchableOpacity>
         </View>
       </View>
@@ -3378,35 +3425,45 @@ function FormalitiesScreen({ notify }: { notify: (message: string, pattern?: num
 }
 
 function DriverScreen({
-  navigate,
-  notify,
+  stay,
   shareLocation,
+  onOpenDriverChat,
 }: {
-  navigate: (screen: ModuleKey, vibration?: number) => void;
-  notify: (message: string, pattern?: number | number[]) => void;
+  stay: SolyStay | null;
   shareLocation: (recipient: 'chauffeur' | 'groupe') => void;
+  onOpenDriverChat: () => void;
 }) {
   const scene = scenes.immersive;
+  const driver = stay?.driver || null;
 
   return (
     <View style={styles.screen}>
       <SectionTitle title="Chauffeur" subtitle="Arrivée, suivi et coordination en temps réel." scene={scene} />
       <SurfaceCard scene={scene} style={styles.driverCard}>
+        {!driver ? (
+          <>
+            <Text style={[styles.cardTitle, { color: scene.textPrimary }]}>Chauffeur en cours d’assignation</Text>
+            <Text style={[styles.cardText, { color: scene.textMuted }]}>Ses coordonnées et le chat privé apparaîtront ici dès confirmation par l’équipe SOLÝ.</Text>
+          </>
+        ) : (
+          <>
         <View style={styles.driverHead}>
           <View style={[styles.driverAvatar, { borderColor: scene.border }]}>
-            <Text style={[styles.driverInitial, { color: scene.accentPrimary }]}>YO</Text>
+            <Text style={[styles.driverInitial, { color: scene.accentPrimary }]}>{userInitials(driver.name)}</Text>
           </View>
           <View>
-            <Text style={[styles.cardTitle, { color: scene.textPrimary }]}>Youssef</Text>
-            <Text style={[styles.cardText, { color: scene.textMuted }]}>Mercedes Classe V · 3421-M-6</Text>
+            <Text style={[styles.cardTitle, { color: scene.textPrimary }]}>{driver.name}</Text>
+            <Text style={[styles.cardText, { color: scene.textMuted }]}>{[driver.vehicle, driver.plate].filter(Boolean).join(' · ') || driver.company}</Text>
           </View>
         </View>
         <MiniMap />
-        <SolyDetailCard label="Attente estimée" value="8 min" scene={scene} />
-        <SolyDetailCard label="Point de rencontre" value="RAK T1" scene={scene} />
-        <SolyBtnPrimary label="Géolocaliser Youssef" scene={scene} onPress={() => notify('Position chauffeur actualisée')} />
-        <SolyBtnPrimary label="Partager ma position avec Youssef" scene={scene} onPress={() => shareLocation('chauffeur')} />
-        <SolyBtnDecline label="Ouvrir le chat chauffeur" scene={scene} onPress={() => navigate('chat')} />
+        <SolyDetailCard label="Téléphone" value={driver.phone || 'Disponible via le chat SOLÝ'} scene={scene} />
+        <SolyDetailCard label="Séjour" value={stay?.code || ''} scene={scene} />
+        {driver.phone ? <SolyBtnPrimary label={`Appeler ${firstName(driver.name)}`} scene={scene} onPress={() => void Linking.openURL(`tel:${driver.phone}`)} /> : null}
+        <SolyBtnPrimary label={`Partager ma position avec ${firstName(driver.name)}`} scene={scene} onPress={() => shareLocation('chauffeur')} />
+        <SolyBtnDecline label="Ouvrir le chat chauffeur" scene={scene} onPress={onOpenDriverChat} />
+          </>
+        )}
       </SurfaceCard>
     </View>
   );

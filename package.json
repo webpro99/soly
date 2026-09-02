@@ -1,11 +1,11 @@
 {
   "name": "soly",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "android:apk:test": "cd android && ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a -Pandroid.enablePngCrunchInReleaseBuilds=false --build-cache --max-workers=1",
+    "android:apk:test": "cd android && NODE_ENV=production ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a -Pandroid.enablePngCrunchInReleaseBuilds=false --build-cache --max-workers=1",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },

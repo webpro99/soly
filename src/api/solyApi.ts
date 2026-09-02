@@ -65,6 +65,17 @@ export type SolyStay = {
   days: Array<Record<string, unknown>>;
   roadbook: Record<string, unknown>;
   notifications: Array<{ id: number; title: string; status: string; priority: string; created_at: string }>;
+  driver?: {
+    id: number;
+    code: string;
+    name: string;
+    company: string;
+    email: string;
+    phone: string;
+    vehicle: string;
+    plate: string;
+    chatRequestId: number;
+  } | null;
   updatedAt: string;
 };
 
@@ -104,6 +115,8 @@ export type SolyConciergeRequest = {
   scheduledDate: string;
   slot: string;
   slotLabel: string;
+  channel?: string;
+  providerId?: number;
   stayCode: string;
   stayId: number;
   client: {
