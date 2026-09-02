@@ -472,15 +472,12 @@ export default function App() {
         const permission = existing.status === 'granted' ? existing : await Notifications.requestPermissionsAsync();
         if (permission.status !== 'granted') return;
         if (Platform.OS === 'android') {
-          await Notifications.setNotificationChannelAsync('soly-main-v2', {
+          await Notifications.setNotificationChannelAsync('soly-updates', {
             name: 'SOLY · Séjour & conciergerie',
             importance: Notifications.AndroidImportance.HIGH,
             vibrationPattern: [0, 220, 120, 220],
             lightColor: '#CFA055',
           });
-          // Retire l ancien canal afin qu Android ne conserve pas deux jeux de
-          // reglages/identites de notification apres la mise a jour.
-          await Notifications.deleteNotificationChannelAsync('soly-updates');
         }
         const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
         if (!projectId) return;

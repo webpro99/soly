@@ -44,7 +44,7 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#CFA055",
-          "defaultChannel": "soly-main-v2"
+          "defaultChannel": "soly-updates"
         }
       ],
       [
