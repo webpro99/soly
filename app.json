@@ -2,7 +2,7 @@
   "expo": {
     "name": "SOLY",
     "slug": "soly",
-    "version": "1.0.29",
+    "version": "1.0.30",
     "orientation": "portrait",
     "icon": "./assets/icon-bell-character.png",
     "userInterfaceStyle": "automatic",
@@ -18,7 +18,7 @@
     "android": {
       "package": "com.soly.app",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 31,
+      "versionCode": 32,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon-bell-character.png",
         "backgroundColor": "#134F32"
@@ -44,7 +44,7 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#CFA055",
-          "defaultChannel": "soly-updates"
+          "defaultChannel": "soly-main-v2"
         }
       ],
       [
