@@ -201,13 +201,6 @@ const accountAdvantages = [
   { tier: 'AMBASSADEUR', description: 'Accès Signature · 24h/24', note: 'Expériences exclusives · invitations privées' },
 ];
 
-const accountPersonalInfo = [
-  { label: 'Thibaut ALI', detail: 'Titulaire du compte · né le 18 mars 1992', marker: '' },
-  { label: '+33 6 .. .. .. 42', detail: 'Téléphone mobile — vérifié', marker: '✓' },
-  { label: 'thibaut.a@...', detail: 'Courriel de contact — vérifié', marker: '✓' },
-  { label: 'Paris 16e · France', detail: 'Adresse de résidence', marker: 'FR' },
-];
-
 const accountPrivacyItems = [
   { label: 'Partage entre proches', detail: 'Position et programme avec le groupe', enabled: true },
   { label: 'Géolocalisation', detail: 'Recommandations et services à proximité', enabled: true },
@@ -216,14 +209,6 @@ const accountPrivacyItems = [
   { label: 'Accès caméra & photos', detail: 'Scan QR et justificatifs d’identité · désactivé', enabled: false, warning: true },
   { label: 'Cookies & suivi', detail: 'Personnalisation de l’expérience', enabled: true },
   { label: 'Données d’usage anonymes', detail: 'Amélioration du service · désactivé', enabled: false, warning: true },
-];
-
-const accountGuests = [
-  { name: 'Zakaria Farouki', role: 'TITULAIRE DU SÉJOUR', initial: 'Z', owner: true },
-  { name: 'Sohan B.', role: 'CONVIVE · A REJOINT', initial: 'S', status: 'en ligne' },
-  { name: 'Yasmine F.', role: 'CONVIVE · A REJOINT', initial: 'Y', status: 'en ligne' },
-  { name: 'Nicolas B.', role: 'CONVIVE · A REJOINT', initial: 'N', status: 'en ligne' },
-  { name: 'Anissa B.', role: 'CONVIVE · A REJOINT', initial: 'A', status: 'déconnectée' },
 ];
 
 const explorerGuides: Record<string, ExplorerGuide> = {
@@ -654,13 +639,13 @@ export default function App() {
           ) : screen === 'butler' ? (
             <ButlerScreen notify={notify} />
           ) : screen === 'weather' ? (
-            <WeatherScreen weather={liveWeather} onClose={goBack} />
+            <WeatherScreen weather={liveWeather} user={session.user} onClose={goBack} />
           ) : screen === 'companions' ? (
             <CompanionsScreen navigate={navigate} shareLocation={shareLocation} />
           ) : screen === 'explore' ? (
             <ExploreScreen city={dynamicStay?.city || liveWeather.city} guide={dynamicExplorer} loading={explorerLoading} error={explorerError} mapApiKey={session.bootstrap?.settings.googleMapsApiKey} onClose={goBack} onSelect={setSelectedSpot} notify={notify} shareLocation={shareLocation} onMapInteraction={setMapInteracting} />
           ) : screen === 'currency' ? (
-            <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} onClose={goBack} />
+            <CurrencyScreen exchangeRate={exchangeRate} weather={liveWeather} user={session.user} onClose={goBack} />
           ) : screen === 'sos' ? (
             <SosScreen onSelect={setSelectedEmergency} notify={notify} />
           ) : screen === 'arrival' ? (
@@ -670,7 +655,7 @@ export default function App() {
           ) : screen === 'driver' ? (
             <DriverScreen stay={dynamicStay} shareLocation={shareLocation} onOpenDriverChat={() => setDriverChatOpen(true)} />
           ) : screen === 'chat' ? (
-            <ChatScreen notify={notify} />
+            <ChatScreen notify={notify} user={session.user} />
           ) : (
             <AccountScreen notify={notify} user={session.user} onLogout={session.logout} />
           )}
@@ -741,7 +726,7 @@ export default function App() {
           }}
         />
         {driverChatOpen ? <DriverContactModal token={session.token!} stay={dynamicStay} onClose={() => setDriverChatOpen(false)} /> : null}
-        {messagesOpen ? <MessageCenterOverlay onClose={() => setMessagesOpen(false)} notify={notify} /> : null}
+        {messagesOpen ? <MessageCenterOverlay onClose={() => setMessagesOpen(false)} notify={notify} user={session.user} /> : null}
           </SafeAreaView>
         </LinearGradient>
         </View>
@@ -987,6 +972,7 @@ function HomeScreen({
       <HomeEmergencySheet
         visible={homeEmergencyOpen}
         weather={weather}
+        user={user}
         onClose={() => setHomeEmergencyOpen(false)}
         notify={notify}
       />
@@ -1001,6 +987,7 @@ function HomeScreen({
       />
       <FormalitiesSheet
         visible={formalitiesSheetOpen}
+        user={user}
         onClose={() => setFormalitiesSheetOpen(false)}
         notify={notify}
       />
@@ -1026,11 +1013,13 @@ function HomeScreen({
 function HomeEmergencySheet({
   visible,
   weather,
+  user,
   onClose,
   notify,
 }: {
   visible: boolean;
   weather: LiveWeatherState;
+  user: SolyUser;
   onClose: () => void;
   notify: (message: string, pattern?: number | number[]) => void;
 }) {
@@ -1073,13 +1062,13 @@ function HomeEmergencySheet({
           <View style={styles.atmosphereAccountRow}>
             <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(207,160,85,0.35)' }]}>
               <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
-                <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
+                <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>{userInitials(user.name)}</Text>
               </View>
-              <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+              <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>{firstName(user.name)}</Text>
               <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
             </View>
           </View>
-          <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+          <Text style={styles.atmosphereGreeting}>Bonjour, {firstName(user.name)}</Text>
           <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '—'}</Text>
           <Image source={solyResting} resizeMode="contain" style={styles.urgentMascotPeek} />
         </View>
@@ -2321,15 +2310,17 @@ function ArrivalModeSheet({
 
 function FormalitiesSheet({
   visible,
+  user,
   onClose,
   notify,
 }: {
   visible: boolean;
+  user: SolyUser;
   onClose: () => void;
   notify: (message: string, pattern?: number | number[]) => void;
 }) {
   const dossiers = [
-    { name: 'Thibaut', status: 'COMPLET', passport: 'Passeport vérifié', visa: 'Visa non requis', complete: true },
+    { name: user.name, status: 'COMPLET', passport: 'Passeport vérifié', visa: 'Visa non requis', complete: true },
     { name: 'Yasmine F.', status: 'INCOMPLET', passport: 'Passeport à ajouter', visa: 'Visa non requis', complete: false },
     { name: 'Nicolas B.', status: 'À VÉRIFIER', passport: 'Passeport reçu', visa: 'Visa à vérifier', complete: false },
   ];
@@ -2767,15 +2758,17 @@ function DriverContactModal({ token, stay, onClose }: { token: string; stay: Sol
 function MessageCenterOverlay({
   onClose,
   notify,
+  user,
 }: {
   onClose: () => void;
   notify: (message: string, pattern?: number | number[]) => void;
+  user: SolyUser;
 }) {
   const scene = scenes.immersive;
   const [activeChat, setActiveChat] = useState('Chauffeur');
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([
-    { id: '1', chat: 'Chauffeur', from: 'them', text: 'Bonjour Slim, je suis devant la sortie principale dans huit minutes.', time: '14:08' },
+    { id: '1', chat: 'Chauffeur', from: 'them', text: `Bonjour ${firstName(user.name)}, je suis devant la sortie principale dans huit minutes.`, time: '14:08' },
     { id: '2', chat: 'Chauffeur', from: 'me', text: 'Parfait, nous descendons.', time: '14:09' },
     { id: '3', chat: 'Groupe', from: 'them', text: 'Je suis au patio, on se retrouve après le check-in ?', time: '14:03' },
     { id: '4', chat: 'Groupe', from: 'me', text: 'Oui, je vous partage la position.', time: '14:04' },
@@ -2937,7 +2930,7 @@ function ButlerScreen({ notify }: { notify: (message: string, pattern?: number |
   );
 }
 
-function WeatherScreen({ weather, onClose }: { weather: LiveWeatherState; onClose: () => void }) {
+function WeatherScreen({ weather, user, onClose }: { weather: LiveWeatherState; user: SolyUser; onClose: () => void }) {
   const days = weather.days.length ? weather.days : weatherDays;
   const day = days[0];
   const dayIcon = weatherIconForDay(day);
@@ -2949,13 +2942,13 @@ function WeatherScreen({ weather, onClose }: { weather: LiveWeatherState; onClos
         <View style={styles.atmosphereAccountRow}>
           <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(177,148,48,0.35)' }]}>
             <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
-              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
+              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>{userInitials(user.name)}</Text>
             </View>
-            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>{firstName(user.name)}</Text>
             <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
           </View>
         </View>
-        <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+        <Text style={styles.atmosphereGreeting}>Bonjour, {firstName(user.name)}</Text>
         <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {days[0]?.temp ?? '—'}</Text>
         <Image source={solyResting} resizeMode="contain" style={styles.atmosphereMascotPeek} />
       </View>
@@ -3202,10 +3195,12 @@ function ExploreScreen({
 function CurrencyScreen({
   exchangeRate,
   weather,
+  user,
   onClose,
 }: {
   exchangeRate: ExchangeRateState;
   weather: LiveWeatherState;
+  user: SolyUser;
   onClose: () => void;
 }) {
   const currencies = [
@@ -3236,13 +3231,13 @@ function CurrencyScreen({
         <View style={styles.atmosphereAccountRow}>
           <View style={[styles.homeAccountPill, { backgroundColor: 'rgba(26,50,19,0.72)', borderColor: 'rgba(207,160,85,0.35)' }]}>
             <View style={[styles.homeAccountInitial, { backgroundColor: '#6A5C20' }]}>
-              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>T</Text>
+              <Text style={[styles.homeAccountInitialText, { color: '#CFA055' }]}>{userInitials(user.name)}</Text>
             </View>
-            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>Thibaut</Text>
+            <Text style={[styles.homeAccountName, { color: '#CFA055' }]}>{firstName(user.name)}</Text>
             <Text style={[styles.homeAccountCaret, { color: '#CFA055' }]}>⌄</Text>
           </View>
         </View>
-        <Text style={styles.atmosphereGreeting}>Bonjour, Thibaut</Text>
+        <Text style={styles.atmosphereGreeting}>Bonjour, {firstName(user.name)}</Text>
         <Text style={styles.atmosphereMeta}>Aujourd’hui  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '—'}</Text>
         <Image source={solyResting} resizeMode="contain" style={styles.currencyMascotPeek} />
       </View>
@@ -3469,12 +3464,12 @@ function DriverScreen({
   );
 }
 
-function ChatScreen({ notify }: { notify: (message: string, pattern?: number | number[]) => void }) {
+function ChatScreen({ notify, user }: { notify: (message: string, pattern?: number | number[]) => void; user: SolyUser }) {
   const scene = scenes.immersive;
   const [activeChat, setActiveChat] = useState('Chauffeur');
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([
-    { id: '1', chat: 'Chauffeur', from: 'them', text: 'Bonjour Slim, je suis devant la sortie principale dans huit minutes.', time: '14:08' },
+    { id: '1', chat: 'Chauffeur', from: 'them', text: `Bonjour ${firstName(user.name)}, je suis devant la sortie principale dans huit minutes.`, time: '14:08' },
     { id: '2', chat: 'Chauffeur', from: 'me', text: 'Parfait, nous descendons.', time: '14:09' },
     { id: '3', chat: 'Groupe', from: 'them', text: 'Je suis au patio, on se retrouve après le check-in ?', time: '14:03' },
     { id: '4', chat: 'Groupe', from: 'me', text: 'Oui, je vous partage la position.', time: '14:04' },
