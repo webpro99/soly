@@ -89,6 +89,7 @@ export type SolyExplorerGuide = {
       eta: string;
       latitude: number;
       longitude: number;
+      distanceMeters?: number;
     }>;
   }>;
   generatedAt?: string;
@@ -305,8 +306,8 @@ export function loadSolyStay(token: string): Promise<SolyStay> {
 export function loadSolyExplorer(token: string, input: { city?: string; latitude?: number; longitude?: number }): Promise<SolyExplorerGuide> {
   const query = new URLSearchParams();
   if (input.city) query.set('city', input.city);
-  if (input.latitude) query.set('latitude', String(input.latitude));
-  if (input.longitude) query.set('longitude', String(input.longitude));
+  if (Number.isFinite(input.latitude)) query.set('latitude', String(input.latitude));
+  if (Number.isFinite(input.longitude)) query.set('longitude', String(input.longitude));
   return apiRequest<SolyExplorerGuide>(`/explorer?${query.toString()}`, {}, token);
 }
 

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { scenes } from '../theme';
 
@@ -39,14 +39,16 @@ export function RealMap({
   onInteractionChange?: (active: boolean) => void;
 }) {
   const scene = dark ? scenes.editorial : scenes.immersive;
-  const validMarkers = markers.filter(isValidMarker);
+  const validMarkers = useMemo(() => markers.filter(isValidMarker), [markers]);
   const fallbackCenter = cityCenters[cityKey(city)] ?? cityCenters.marrakech;
   const center = isValidCoordinates(userLocation) ? userLocation : validMarkers[0] ?? fallbackCenter;
   const cleanKey = apiKey.trim();
   const source = useMemo(() => {
     if (!cleanKey) {
-      const query = encodeURIComponent(`${center.latitude},${center.longitude}`);
-      return { uri: `https://www.google.com/maps?q=${query}&z=14&output=embed` };
+      return {
+        html: googleEmbedHtml(center, dark),
+        baseUrl: 'https://www.solyvents.fr',
+      };
     }
 
     return {
@@ -60,6 +62,13 @@ export function RealMap({
       baseUrl: 'https://solyvents.fr',
     };
   }, [center.latitude, center.longitude, cleanKey, dark, validMarkers, userLocation]);
+  const [mapLoading, setMapLoading] = useState(true);
+  const [mapError, setMapError] = useState(false);
+
+  useEffect(() => {
+    setMapLoading(true);
+    setMapError(false);
+  }, [source]);
 
   // La carte vit dans le ScrollView principal de l ecran. Sans ces handlers, le
   // ScrollView intercepte le multi-touch et le pincement fait defiler la page au
@@ -83,8 +92,37 @@ export function RealMap({
         nestedScrollEnabled
         setSupportMultipleWindows={false}
         startInLoadingState
+        renderLoading={() => <View style={styles.nativeLoader}><ActivityIndicator color="#CFA055" /></View>}
+        onMessage={(event) => {
+          const message = event.nativeEvent.data;
+          if (message === 'soly-map-ready' || message === 'soly-map-fallback') setMapLoading(false);
+        }}
+        onLoadEnd={() => {
+          // Le document est charge avant l API Google. Le message JavaScript reste
+          // prioritaire, ce delai evite toutefois un masque bloque indefiniment.
+          setTimeout(() => setMapLoading(false), 8000);
+        }}
+        onError={() => {
+          setMapLoading(false);
+          setMapError(true);
+        }}
+        onHttpError={() => {
+          setMapLoading(false);
+          setMapError(true);
+        }}
         style={styles.webView}
       />
+      {mapLoading ? (
+        <View pointerEvents="none" style={styles.mapStatus}>
+          <ActivityIndicator color="#CFA055" />
+          <Text style={styles.mapStatusText}>Chargement de la carte…</Text>
+        </View>
+      ) : null}
+      {mapError ? (
+        <View pointerEvents="none" style={styles.mapError}>
+          <Text style={styles.mapErrorText}>Carte momentanément indisponible</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -105,12 +143,29 @@ function googleMapHtml({
   const config = JSON.stringify({ center, dark, markers, userLocation }).replace(/</g, '\\u003c');
   const encodedKey = encodeURIComponent(apiKey);
 
+  const fallbackUrl = `https://www.google.com/maps?q=${encodeURIComponent(`${center.latitude},${center.longitude}`)}&z=14&output=embed`;
+
   return `<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<style>html,body,#map{width:100%;height:100%;margin:0;padding:0;background:#0b2417}.gm-style-cc{display:none}</style></head>
+<style>html,body,#map{width:100%;height:100%;margin:0;padding:0;background:#0b2417}.gm-style-cc{display:none}iframe{width:100%;height:100%;border:0}</style></head>
 <body><div id="map"></div><script>
 const config=${config};
+let mapResolved=false;
+function notify(value){try{window.ReactNativeWebView.postMessage(value)}catch(e){}}
+function renderFallback(){
+  if(mapResolved)return;
+  mapResolved=true;
+  const frame=document.createElement('iframe');
+  frame.src=${JSON.stringify(fallbackUrl)};
+  frame.referrerPolicy='no-referrer-when-downgrade';
+  frame.onload=function(){notify('soly-map-fallback')};
+  const root=document.getElementById('map');root.innerHTML='';root.appendChild(frame);
+  notify('soly-map-fallback');
+}
+window.gm_authFailure=renderFallback;
+setTimeout(renderFallback,7000);
 window.initMap=function(){
+  if(mapResolved)return;
   const map=new google.maps.Map(document.getElementById('map'),{
     center:{lat:config.center.latitude,lng:config.center.longitude},zoom:14,
     disableDefaultUI:true,zoomControl:true,gestureHandling:'greedy',
@@ -130,8 +185,15 @@ window.initMap=function(){
     bounds.extend(position);
   }
   if(config.markers.length>1){map.fitBounds(bounds,48);}
+  google.maps.event.addListenerOnce(map,'idle',function(){mapResolved=true;notify('soly-map-ready')});
 };
-</script><script async defer src="https://maps.googleapis.com/maps/api/js?key=${encodedKey}&callback=initMap"></script></body></html>`;
+</script><script async defer onerror="renderFallback()" src="https://maps.googleapis.com/maps/api/js?key=${encodedKey}&callback=initMap"></script></body></html>`;
+}
+
+function googleEmbedHtml(center: Coordinates, dark: boolean) {
+  const query = encodeURIComponent(`${center.latitude},${center.longitude}`);
+  const url = `https://www.google.com/maps?q=${query}&z=14&output=embed`;
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body,iframe{width:100%;height:100%;margin:0;border:0;background:${dark ? '#0b2417' : '#e8e4da'}}</style></head><body><iframe title="Carte SOLY" src="${url}" onload="window.ReactNativeWebView&&window.ReactNativeWebView.postMessage('soly-map-ready')"></iframe></body></html>`;
 }
 
 function isValidMarker(marker: MapMarker) {
@@ -160,5 +222,33 @@ const styles = StyleSheet.create({
   webView: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  nativeLoader: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0B2417',
+  },
+  mapStatus: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    backgroundColor: '#0B2417',
+  },
+  mapStatusText: {
+    color: '#D4C59A',
+    fontSize: 11,
+    letterSpacing: 0.7,
+  },
+  mapError: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0B2417',
+  },
+  mapErrorText: {
+    color: '#D4C59A',
+    fontSize: 11,
   },
 });

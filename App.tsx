@@ -146,6 +146,7 @@ type ExplorerActivity = {
   eta: string;
   latitude: number;
   longitude: number;
+  distanceMeters?: number;
 };
 
 type ExplorerSection = {
@@ -518,7 +519,8 @@ export default function App() {
 
   useEffect(() => {
     if (screen !== 'explore' || !session.token || explorerLoading || dynamicExplorer) return;
-    const requestKey = `${session.user?.id || 0}|${dynamicStay?.city || liveWeather.city}`;
+    const city = dynamicStay?.city || liveWeather.city;
+    const requestKey = `${session.user?.id || 0}|${city}`;
     if (explorerRequestKey.current === requestKey) return;
     explorerRequestKey.current = requestKey;
     setExplorerLoading(true);
@@ -526,17 +528,24 @@ export default function App() {
     const loadExplorer = async () => {
       const existing = await Location.getForegroundPermissionsAsync();
       const permission = existing.status === 'undetermined' ? await Location.requestForegroundPermissionsAsync() : existing;
-      if (permission.status !== 'granted') return loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city });
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      if (permission.status !== 'granted') {
+        const cityCoordinates = await weatherCoordsForCity(city);
+        return loadSolyExplorer(session.token!, { city, latitude: cityCoordinates.latitude, longitude: cityCoordinates.longitude });
+      }
+      const lastKnown = await Location.getLastKnownPositionAsync({ maxAge: 10 * 60 * 1000, requiredAccuracy: 500 });
+      const position = lastKnown ?? await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       return loadSolyExplorer(session.token!, {
-        city: dynamicStay?.city || liveWeather.city,
+        city,
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
       });
     };
     loadExplorer()
       .then(setDynamicExplorer)
-      .catch(() => loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city }).then(setDynamicExplorer))
+      .catch(async () => {
+        const cityCoordinates = await weatherCoordsForCity(city);
+        return loadSolyExplorer(session.token!, { city, latitude: cityCoordinates.latitude, longitude: cityCoordinates.longitude }).then(setDynamicExplorer);
+      })
       .catch((reason) => {
         // Le guide statique reste affiche en secours, mais on dit desormais pourquoi
         // l IA n a pas repondu au lieu d avaler l erreur en silence.
@@ -3053,9 +3062,25 @@ function ExploreScreen({
   onMapInteraction?: (active: boolean) => void;
 }) {
   const scene = scenes.editorial;
-  const guide = (dynamicGuide as ExplorerGuide | null) || explorerGuideForCity(city);
+  const guide = useMemo(
+    () => prepareExplorerGuide((dynamicGuide as ExplorerGuide | null) || explorerGuideForCity(city)),
+    [city, dynamicGuide],
+  );
   const [openSection, setOpenSection] = useState(guide.sections[0]?.title ?? '');
-  const activityMarkers = guide.sections.flatMap((section) => section.activities);
+  const activityMarkers = useMemo(
+    () => guide.sections.flatMap((section) => section.activities),
+    [guide],
+  );
+  const nearestActivities = useMemo(
+    () => [...activityMarkers]
+      .sort((left, right) => (left.distanceMeters ?? Number.MAX_SAFE_INTEGER) - (right.distanceMeters ?? Number.MAX_SAFE_INTEGER))
+      .slice(0, 6),
+    [activityMarkers],
+  );
+
+  useEffect(() => {
+    setOpenSection(guide.sections[0]?.title ?? '');
+  }, [guide]);
 
   return (
     <View style={styles.stayLayerScreen}>
@@ -3072,15 +3097,21 @@ function ExploreScreen({
       </View>
       <View style={styles.atmosphereRule} />
 
-      {loading ? (
-        <View style={styles.explorerAiRow}>
-          <ActivityIndicator size="small" color="#D2B15B" />
-          <Text style={styles.explorerAiLoading}>SOLÝ prépare vos adresses avec OpenAI…</Text>
+      {loading && !dynamicGuide ? (
+        <View style={styles.explorerLoadingCard}>
+          <View style={styles.explorerLoadingSpinner}>
+            <ActivityIndicator size="large" color="#D2B15B" />
+            <MaterialIcons name="place" size={20} color="#F3EBDD" style={styles.explorerLoadingPin} />
+          </View>
+          <Text style={styles.explorerLoadingTitle}>SOLÝ prépare votre carte</Text>
+          <Text style={styles.explorerLoadingCopy}>Connexion à OpenAI et recherche des meilleures adresses autour de vous…</Text>
         </View>
-      ) : error ? (
+      ) : (
+        <>
+      {error ? (
         <View style={styles.explorerAiRow}>
           <MaterialIcons name="cloud-off" size={14} color="#E0A99B" />
-          <Text style={styles.explorerAiError}>{error}</Text>
+          <Text style={styles.explorerAiError}>{error} Une sélection locale de secours reste disponible.</Text>
         </View>
       ) : null}
 
@@ -3089,6 +3120,37 @@ function ExploreScreen({
       <Text style={styles.explorerIntro}>
         Vous êtes dans la <Text style={styles.explorerAccentText}>{guide.district}</Text>. {guide.note}
       </Text>
+
+      {nearestActivities.length ? (
+        <View style={styles.explorerNearbyBlock}>
+          <View style={styles.explorerNearbyHeading}>
+            <MaterialIcons name="near-me" size={16} color="#CFA055" />
+            <View style={styles.explorerNearbyHeadingCopy}>
+              <Text style={styles.explorerNearbyTitle}>AUTOUR DE VOUS</Text>
+              <Text style={styles.explorerNearbySubtitle}>Les adresses les plus proches en premier</Text>
+            </View>
+          </View>
+          <View style={styles.explorerActivityList}>
+            {nearestActivities.map((activity, index) => (
+              <TouchableOpacity
+                key={`nearby-${activity.title}-${index}`}
+                activeOpacity={0.78}
+                onPress={() => onSelect(activity)}
+                style={styles.explorerActivityCard}
+              >
+                <View style={styles.explorerNearbyRank}>
+                  <Text style={styles.explorerNearbyRankText}>{index + 1}</Text>
+                </View>
+                <View style={styles.explorerActivityCopy}>
+                  <Text style={styles.explorerActivityTitle}>{activity.title}</Text>
+                  <Text style={styles.explorerActivityDescription}>{activity.category} · {activity.description}</Text>
+                </View>
+                <Text style={styles.explorerActivityDistance}>{activity.distance}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      ) : null}
 
       {guide.sections.map((section) => {
         const isOpen = openSection === section.title;
@@ -3135,9 +3197,59 @@ function ExploreScreen({
           <Text style={[styles.shareButtonPrimaryText, { color: scene.bgDeep }]}>Au chauffeur</Text>
         </TouchableOpacity>
       </View>
+        </>
+      )}
       </View>
     </View>
   );
+}
+
+function prepareExplorerGuide(source: ExplorerGuide): ExplorerGuide {
+  const reference = validExplorerCoordinates(source.userLocation) ? source.userLocation : undefined;
+  const sections = source.sections.map((section) => ({
+    ...section,
+    activities: section.activities
+      .filter((activity) => validExplorerCoordinates(activity))
+      .map((activity) => {
+        const meters = reference
+          ? explorerDistanceMeters(reference.latitude, reference.longitude, activity.latitude, activity.longitude)
+          : activity.distanceMeters;
+        return {
+          ...activity,
+          distanceMeters: meters,
+          distance: Number.isFinite(meters) ? formatExplorerDistance(meters!) : activity.distance,
+        };
+      })
+      .sort((left, right) => (left.distanceMeters ?? Number.MAX_SAFE_INTEGER) - (right.distanceMeters ?? Number.MAX_SAFE_INTEGER)),
+  }));
+
+  return {
+    ...source,
+    sections,
+  };
+}
+
+function validExplorerCoordinates(value?: { latitude: number | null; longitude: number | null }):
+  value is { latitude: number; longitude: number } {
+  return Boolean(
+    value && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
+      && Math.abs(value.latitude!) <= 90 && Math.abs(value.longitude!) <= 180,
+  );
+}
+
+function explorerDistanceMeters(fromLatitude: number, fromLongitude: number, toLatitude: number, toLongitude: number) {
+  const radians = (degrees: number) => degrees * Math.PI / 180;
+  const earthRadius = 6371000;
+  const latitudeDelta = radians(toLatitude - fromLatitude);
+  const longitudeDelta = radians(toLongitude - fromLongitude);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(fromLatitude)) * Math.cos(radians(toLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
+  return Math.round(earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a))));
+}
+
+function formatExplorerDistance(meters: number) {
+  if (meters < 1000) return `${Math.max(10, Math.round(meters / 10) * 10)} m`;
+  return `${(meters / 1000).toFixed(meters < 10000 ? 1 : 0).replace('.', ',')} km`;
 }
 
 function CurrencyScreen({
@@ -7444,6 +7556,43 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 2,
   },
+  explorerLoadingCard: {
+    minHeight: 430,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.30)',
+    backgroundColor: '#0A2C1B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 30,
+    gap: 14,
+  },
+  explorerLoadingSpinner: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(207,160,85,0.06)',
+  },
+  explorerLoadingPin: {
+    position: 'absolute',
+  },
+  explorerLoadingTitle: {
+    color: '#F3EBDD',
+    fontFamily: type.serif,
+    fontSize: 23,
+    textAlign: 'center',
+  },
+  explorerLoadingCopy: {
+    color: '#AEBDB2',
+    fontFamily: type.body,
+    fontSize: 11,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
   explorerAiLoading: {
     color: '#D2B15B',
     fontFamily: type.body,
@@ -7500,6 +7649,49 @@ const styles = StyleSheet.create({
   },
   explorerAccentText: {
     color: '#CFA055',
+  },
+  explorerNearbyBlock: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.22)',
+    backgroundColor: 'rgba(7,34,20,0.52)',
+    padding: 12,
+  },
+  explorerNearbyHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingBottom: 8,
+  },
+  explorerNearbyHeadingCopy: {
+    flex: 1,
+  },
+  explorerNearbyTitle: {
+    color: '#D2B15B',
+    fontFamily: type.bodyBold,
+    fontSize: 10,
+    letterSpacing: 2.2,
+  },
+  explorerNearbySubtitle: {
+    color: '#AEBDB2',
+    fontFamily: type.body,
+    fontSize: 9,
+    marginTop: 2,
+  },
+  explorerNearbyRank: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(207,160,85,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.38)',
+  },
+  explorerNearbyRankText: {
+    color: '#D2B15B',
+    fontFamily: type.bodyBold,
+    fontSize: 9,
   },
   explorerBlock: {
     gap: 12,
