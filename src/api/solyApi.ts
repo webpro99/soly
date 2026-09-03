@@ -70,6 +70,20 @@ export type SolyStay = {
     plate: string;
     chatRequestId: number;
   } | null;
+  arrival?: {
+    mode: string;
+    label: string;
+    reference: string;
+    time: string;
+  };
+  formalities?: {
+    total: number;
+    completed: number;
+    pending: number;
+    deadline: string;
+    daysLeft: number | null;
+    travelers: Array<{ name: string; status: 'complete' | 'pending' | 'review'; passport: string; visa: string }>;
+  };
   updatedAt: string;
 };
 
@@ -309,6 +323,16 @@ export function loadSolyExplorer(token: string, input: { city?: string; latitude
   if (Number.isFinite(input.latitude)) query.set('latitude', String(input.latitude));
   if (Number.isFinite(input.longitude)) query.set('longitude', String(input.longitude));
   return apiRequest<SolyExplorerGuide>(`/explorer?${query.toString()}`, {}, token);
+}
+
+export type SolyPaymentMethod = { type: string; paypalEmail: string; updatedAt: string };
+
+/**
+ * Seule l adresse PayPal est transmise : elle identifie le beneficiaire sans
+ * qu aucun identifiant de paiement ne transite ni ne soit conserve.
+ */
+export function saveSolyPaymentMethod(token: string, paypalEmail: string): Promise<SolyPaymentMethod> {
+  return apiRequest('/me/payment', { method: 'POST', body: JSON.stringify({ type: 'paypal', paypalEmail }) }, token);
 }
 
 export async function registerSolyPushToken(token: string, pushToken: string, platform: string): Promise<{ registered: boolean }> {

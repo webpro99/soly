@@ -50,7 +50,16 @@ import { AdminPortal } from './src/components/AdminPortal';
 import { DriverPortal } from './src/components/DriverPortal';
 import { useSolySession } from './src/hooks/useSolySession';
 import { useUnreadMessages } from './src/hooks/useUnreadMessages';
-import { createSolyConciergeRequest, loadSolyConciergeRequests, loadSolyExplorer, loadSolyStay, registerSolyPushToken, replyToSolyConciergeRequest, type SolyConciergeRequest, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
+
+/**
+ * Le fil chauffeur et la conciergerie SOLY partagent le meme endpoint : le
+ * modal chauffeur a besoin des deux pour retrouver le sien. On ecarte donc le
+ * fil chauffeur partout ou l on affiche la conversation SOLY, sinon les deux
+ * discussions se melangent et le compteur de non-lus compte les messages du
+ * chauffeur comme des messages de l equipe.
+ */
+const isSolyConversation = (request: SolyConciergeRequest) => request.channel !== 'driver_chat';
+import { saveSolyPaymentMethod, createSolyConciergeRequest, loadSolyConciergeRequests, loadSolyExplorer, loadSolyStay, registerSolyPushToken, replyToSolyConciergeRequest, type SolyConciergeRequest, type SolyExplorerGuide, type SolyStay, type SolyUser } from './src/api/solyApi';
 import {
   agendaDays,
   companions,
@@ -891,6 +900,27 @@ function HomeScreen({
   const unreadSoly = useUnreadMessages('client', user.id);
   const solyIncomingCount = unreadSoly.countUnread(solyRequests);
   const [homeEmergencyOpen, setHomeEmergencyOpen] = useState(false);
+  const [arrivalSheetOpen, setArrivalSheetOpen] = useState(false);
+  const [formalitiesSheetOpen, setFormalitiesSheetOpen] = useState(false);
+
+  // Les deux cartes annoncaient un decompte fige. Elles disent maintenant ce que
+  // le sejour contient reellement, et restent muettes tant que rien n est saisi
+  // plutot que d afficher un chiffre invente.
+  const arrivalMeta = useMemo(() => {
+    const arrival = stay?.arrival;
+    if (!arrival?.label) return 'Avion, train ou voiture — un chauffeur vous attendra';
+    return [arrival.label, arrival.reference, arrival.time].filter(Boolean).join(' · ');
+  }, [stay?.arrival]);
+
+  const formalitiesMeta = useMemo(() => {
+    const formalities = stay?.formalities;
+    if (!formalities?.total) return 'Aucun document demandé pour le moment';
+    if (!formalities.pending) return `${formalities.total} dossier${formalities.total > 1 ? 's' : ''} complet${formalities.total > 1 ? 's' : ''}`;
+    const deadline = formalities.daysLeft === null
+      ? ''
+      : ` — échéance dans ${formalities.daysLeft} jour${formalities.daysLeft > 1 ? 's' : ''}`;
+    return `${formalities.pending} dossier${formalities.pending > 1 ? 's' : ''} sur ${formalities.total} incomplet${formalities.pending > 1 ? 's' : ''}${deadline}`;
+  }, [stay?.formalities]);
   const homeModuleRows = useMemo(() => chunkArray(homeModules, 3), []);
 
   useEffect(() => {
@@ -898,7 +928,7 @@ function HomeScreen({
     const loadInbox = () => loadSolyConciergeRequests(token)
       .then(({ requests }) => {
         if (!mounted) return;
-        setSolyRequests(requests);
+        setSolyRequests(requests.filter(isSolyConversation));
       })
       .catch(() => undefined);
     void loadInbox();
@@ -963,6 +993,20 @@ function HomeScreen({
         <Text style={[styles.homeLogo, { color: scene.accentPrimary }]}>SOLÝ</Text>
         <Text style={[styles.homeSubtitle, { color: scene.textPrimary }]}>VOTRE MAJORDOME</Text>
       </View>
+
+      <HomeStayActions
+        disabled={!stay}
+        arrivalMeta={arrivalMeta}
+        formalitiesMeta={formalitiesMeta}
+        onArrival={() => {
+          Vibration.vibrate(8);
+          setArrivalSheetOpen(true);
+        }}
+        onFormalities={() => {
+          Vibration.vibrate(8);
+          setFormalitiesSheetOpen(true);
+        }}
+      />
 
       <TouchableOpacity activeOpacity={0.75} onPress={wakeSoly} style={styles.homeWakePrompt}>
         <View style={[styles.homeWakeDot, { backgroundColor: scene.accentPrimary }]} />
@@ -1033,6 +1077,22 @@ function HomeScreen({
         <View style={styles.homeSosLine} />
       </View>
 
+      <ArrivalModeSheet
+        visible={arrivalSheetOpen}
+        onClose={() => setArrivalSheetOpen(false)}
+        onConfirm={() => {
+          setArrivalSheetOpen(false);
+          notify('Arrivée confirmée · chauffeur informé', [12, 30, 12]);
+        }}
+      />
+
+      <FormalitiesSheet
+        visible={formalitiesSheetOpen}
+        user={user}
+        onClose={() => setFormalitiesSheetOpen(false)}
+        notify={notify}
+      />
+
       <HomeEmergencySheet
         visible={homeEmergencyOpen}
         weather={weather}
@@ -1055,7 +1115,7 @@ function HomeScreen({
           notify('SOLÝ est prévenu · un majordome arrive dans le chat', [12, 30, 12]);
         }}
       />
-      <AccountSheet visible={accountSheetOpen} onClose={() => setAccountSheetOpen(false)} user={user} onLogout={onLogout} />
+      <AccountSheet visible={accountSheetOpen} onClose={() => setAccountSheetOpen(false)} user={user} token={token} notify={notify} onLogout={onLogout} />
     </Animated.View>
   );
 }
@@ -1310,7 +1370,8 @@ function SolyRequestSheet({
       setRequestFeedback(null);
       setChatLoading(true);
       loadSolyConciergeRequests(token)
-        .then(({ requests: items }) => {
+        .then(({ requests: all }) => {
+          const items = all.filter(isSolyConversation);
           setRequests(items);
           setActiveRequestId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null);
         })
@@ -1322,7 +1383,7 @@ function SolyRequestSheet({
   useEffect(() => {
     if (!visible || mode !== 'chat') return undefined;
     const timer = setInterval(() => {
-      loadSolyConciergeRequests(token).then(({ requests: items }) => setRequests(items)).catch(() => undefined);
+      loadSolyConciergeRequests(token).then(({ requests: items }) => setRequests(items.filter(isSolyConversation))).catch(() => undefined);
     }, 12000);
     return () => clearInterval(timer);
   }, [mode, token, visible]);
@@ -1621,13 +1682,18 @@ function AccountSheet({
   visible,
   onClose,
   user,
+  token,
+  notify,
   onLogout,
 }: {
   visible: boolean;
   onClose: () => void;
   user: SolyUser;
+  token: string;
+  notify: (message: string, pattern?: number | number[]) => void;
   onLogout: () => Promise<void>;
 }) {
+  const [paymentSheetOpen, setPaymentSheetOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<AccountSection | ''>('');
   const [privacySettings, setPrivacySettings] = useState({
     location: true,
@@ -1853,6 +1919,15 @@ function AccountSheet({
             </View>
             <TouchableOpacity
               activeOpacity={0.75}
+              onPress={() => setPaymentSheetOpen(true)}
+              style={styles.accountAddPayment}
+            >
+              <MaterialIcons name="account-balance-wallet" size={22} color="#CFA055" />
+              <Text style={styles.accountAddPaymentText}>Moyen de paiement</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.75}
               onPress={() => {
                 onClose();
                 void onLogout();
@@ -1862,6 +1937,24 @@ function AccountSheet({
               <MaterialIcons name="logout" size={22} color="#CFA055" />
               <Text style={styles.accountAddPaymentText}>Se déconnecter</Text>
             </TouchableOpacity>
+
+            {paymentSheetOpen ? (
+              <PaymentEntrySheet
+                onClose={() => setPaymentSheetOpen(false)}
+                onSave={(paypalEmail) => {
+                  if (!paypalEmail) {
+                    notify('Renseignez votre adresse PayPal.');
+                    return;
+                  }
+                  saveSolyPaymentMethod(token, paypalEmail)
+                    .then(() => {
+                      setPaymentSheetOpen(false);
+                      notify('Adresse PayPal enregistrée', [10, 24, 10]);
+                    })
+                    .catch((reason) => notify(reason instanceof Error ? reason.message : 'Enregistrement impossible.'));
+                }}
+              />
+            ) : null}
           </View>
         </View>
       </View>
@@ -1869,7 +1962,7 @@ function AccountSheet({
   );
 }
 
-function PaymentEntrySheet({ onClose, onSave }: { onClose: () => void; onSave: () => void }) {
+function PaymentEntrySheet({ onClose, onSave }: { onClose: () => void; onSave: (paypalEmail: string) => void }) {
   const [method, setMethod] = useState<'card' | 'paypal'>('card');
   const [cardNumber, setCardNumber] = useState('');
   const [expiration, setExpiration] = useState('');
@@ -1930,7 +2023,7 @@ function PaymentEntrySheet({ onClose, onSave }: { onClose: () => void; onSave: (
             <PaymentField label="ADRESSE PAYPAL" value={holder} onChangeText={setHolder} placeholder="nom@exemple.com" keyboardType="email-address" autoCapitalize="none" />
           )}
 
-          <TouchableOpacity activeOpacity={0.78} onPress={onSave} style={styles.paymentEntrySave}>
+          <TouchableOpacity activeOpacity={0.78} onPress={() => onSave(method === 'paypal' ? holder.trim() : '')} style={styles.paymentEntrySave}>
             <Text style={styles.paymentEntrySaveText}>ENREGISTRER</Text>
           </TouchableOpacity>
           <View style={styles.paymentEntrySecurity}>
@@ -2066,9 +2159,13 @@ function AccountSectionBlock({
 
 function HomeStayActions({
   disabled,
+  arrivalMeta,
+  formalitiesMeta,
   onArrival,
   onFormalities,
 }: {
+  arrivalMeta: string;
+  formalitiesMeta: string;
   disabled: boolean;
   onArrival: () => void;
   onFormalities: () => void;
@@ -2088,7 +2185,7 @@ function HomeStayActions({
         </View>
         <View style={styles.homeActionCopy}>
           <Text style={[styles.homeActionTitle, { color: scene.textPrimary }]}>Indiquez votre mode d'arrivée</Text>
-          <Text style={[styles.homeActionMeta, { color: scene.accentPrimary }]}>Avion, train ou voiture — un chauffeur vous attendra</Text>
+          <Text style={[styles.homeActionMeta, { color: scene.accentPrimary }]}>{arrivalMeta}</Text>
         </View>
         <Text style={[styles.homeActionChevron, { color: scene.accentPrimary }]}>›</Text>
       </TouchableOpacity>
@@ -2104,7 +2201,7 @@ function HomeStayActions({
         </View>
         <View style={styles.homeActionCopy}>
           <Text style={[styles.homeActionTitle, { color: scene.textPrimary }]}>Formalités d'arrivée à compléter</Text>
-          <Text style={[styles.homeActionMeta, { color: scene.accentPrimary }]}>2 dossiers sur 3 incomplets — échéance dans 3 jours</Text>
+          <Text style={[styles.homeActionMeta, { color: scene.accentPrimary }]}>{formalitiesMeta}</Text>
         </View>
         <Text style={[styles.homeActionChevron, { color: scene.accentPrimary }]}>›</Text>
       </TouchableOpacity>
@@ -2485,7 +2582,18 @@ function StayScreen({
               <Text style={styles.stayDriverButtonText}>CONTACTER</Text>
             </TouchableOpacity>
           </View>
-        </View> : null}
+        </View> : (
+          // Sans chauffeur assigne, une carte absente laisse croire a une panne :
+          // on dit explicitement ou en est l affectation.
+          <View style={[styles.stayDriverCard, styles.stayDriverCardEmpty]}>
+            <View style={styles.driverArrivalBadge}>
+              <View style={[styles.driverArrivalBadgeDot, styles.driverArrivalBadgeDotIdle]} />
+              <Text style={styles.driverArrivalBadgeText}>CHAUFFEUR</Text>
+            </View>
+            <Text style={styles.stayDriverName}>Pas encore assigné</Text>
+            <Text style={styles.stayDriverRoute}>L’équipe SOLÝ vous confirmera votre chauffeur avant l’arrivée.</Text>
+          </View>
+        )}
 
         <Text style={styles.stayLayerWelcome}>{stay ? `Nous sommes heureux de vous accueillir du ${formatStayDate(stay.arrivalDate)} au ${formatStayDate(stay.departureDate)} · ${stay.city}` : 'Aucun séjour actif n’est encore disponible.'}</Text>
 
@@ -6241,6 +6349,12 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
     backgroundColor: 'rgba(207,160,85,0.05)',
+  },
+  stayDriverCardEmpty: {
+    opacity: 0.85,
+  },
+  driverArrivalBadgeDotIdle: {
+    backgroundColor: '#7E8F85',
   },
   driverArrivalBadge: {
     alignSelf: 'flex-start',
