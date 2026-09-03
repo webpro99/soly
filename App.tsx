@@ -45,7 +45,6 @@ import {
   ToastNotification,
 } from './src/components/SolyPrimitives';
 import { RealMap } from './src/components/RealMap';
-import { StayLocatorMap } from './src/components/StayLocatorMap';
 import { AuthScreen } from './src/components/AuthScreen';
 import { AdminPortal } from './src/components/AdminPortal';
 import { DriverPortal } from './src/components/DriverPortal';
@@ -113,7 +112,7 @@ const embassyContacts = [
 ];
 
 type ArrivalMode = 'flight' | 'train' | 'car';
-type AccountSection = 'advantages' | 'personal' | 'payment' | 'privacy' | 'guests';
+type AccountSection = 'advantages' | 'personal' | 'privacy';
 type LiveWeatherDay = {
   label: string;
   temp: string;
@@ -417,10 +416,12 @@ export default function App() {
   const explorerRequestKey = useRef('');
   const [selectedEmergency, setSelectedEmergency] = useState('');
   const [driverChatOpen, setDriverChatOpen] = useState(false);
-  const [messagesOpen, setMessagesOpen] = useState(false);
   const [solyAwake, setSolyAwake] = useState(false);
+  const [solyChatSignal, setSolyChatSignal] = useState(0);
+  const [notificationTarget, setNotificationTarget] = useState<{ screen: string; requestId?: number; channel?: string; nonce: number } | null>(null);
   const session = useSolySession();
-  const liveWeather = useLiveWeather();
+  const isClientSession = Boolean(session.user && session.user.role !== 'staff' && session.user.role !== 'driver');
+  const liveWeather = useLiveWeather(isClientSession, dynamicStay?.city || session.bootstrap?.settings.city);
   const exchangeRate = useExchangeRate();
   const sceneName = modules.find((item) => item.key === screen)?.scene ?? screenScene(screen);
   const scene = scenes[sceneName];
@@ -445,6 +446,28 @@ export default function App() {
     const timer = setTimeout(() => setLaunchComplete(true), Platform.OS === 'web' ? 900 : 1450);
     return () => clearTimeout(timer);
   }, [fontsLoaded]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    const handleResponse = (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const data = response.notification.request.content.data;
+      const targetScreen = typeof data?.screen === 'string' ? data.screen : '';
+      if (targetScreen) {
+        setNotificationTarget({
+          screen: targetScreen,
+          requestId: typeof data.requestId === 'number' ? data.requestId : undefined,
+          channel: typeof data.channel === 'string' ? data.channel : undefined,
+          nonce: Date.now(),
+        });
+      }
+      void Notifications.setBadgeCountAsync(0).catch(() => undefined);
+      void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+    };
+    void Notifications.getLastNotificationResponseAsync().then(handleResponse).catch(() => undefined);
+    const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (!session.token || !session.user) return;
@@ -473,6 +496,19 @@ export default function App() {
   }, [session.token, session.user?.id, refreshClientStay]);
 
   useEffect(() => {
+    if (!notificationTarget || !session.user || session.user.role === 'staff' || session.user.role === 'driver') return;
+    setScreen('home');
+    setPreviousScreen('home');
+    if (notificationTarget.screen === 'driver_chat' || notificationTarget.channel === 'driver_chat') {
+      void refreshClientStay();
+      setDriverChatOpen(true);
+    } else if (notificationTarget.screen === 'soly_chat') {
+      setSolyChatSignal(notificationTarget.nonce);
+    }
+    setNotificationTarget(null);
+  }, [notificationTarget, refreshClientStay, session.user]);
+
+  useEffect(() => {
     if (!session.token || session.user?.role !== 'client') return undefined;
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refreshClientStay();
@@ -487,12 +523,18 @@ export default function App() {
     explorerRequestKey.current = requestKey;
     setExplorerLoading(true);
     setExplorerError('');
-    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      .then((position) => loadSolyExplorer(session.token!, {
+    const loadExplorer = async () => {
+      const existing = await Location.getForegroundPermissionsAsync();
+      const permission = existing.status === 'undetermined' ? await Location.requestForegroundPermissionsAsync() : existing;
+      if (permission.status !== 'granted') return loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city });
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      return loadSolyExplorer(session.token!, {
         city: dynamicStay?.city || liveWeather.city,
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
-      }))
+      });
+    };
+    loadExplorer()
       .then(setDynamicExplorer)
       .catch(() => loadSolyExplorer(session.token!, { city: dynamicStay?.city || liveWeather.city }).then(setDynamicExplorer))
       .catch((reason) => {
@@ -528,7 +570,15 @@ export default function App() {
   }
 
   if (session.user.role === 'driver') {
-    return <DriverPortal token={session.token!} user={session.user} onLogout={session.logout} />;
+    return (
+      <DriverPortal
+        token={session.token!}
+        user={session.user}
+        onLogout={session.logout}
+        notificationScreen={notificationTarget?.screen}
+        onNotificationHandled={() => setNotificationTarget(null)}
+      />
+    );
   }
 
   const navigate = (next: ModuleKey, vibration = 6) => {
@@ -633,6 +683,7 @@ export default function App() {
               user={session.user}
               stay={dynamicStay}
               onLogout={session.logout}
+              openSolyChatSignal={solyChatSignal}
             />
           ) : screen === 'stay' ? (
             <StayScreen stay={dynamicStay} onSelect={setSelectedAgenda} onOpenDriverChat={() => setDriverChatOpen(true)} onClose={goBack} />
@@ -669,12 +720,8 @@ export default function App() {
               label="Messages"
               scene={scene}
               badge="2"
-              onPress={() => {
-                setDriverChatOpen(false);
-                setMessagesOpen(false);
-                navigate('chat');
-              }}
-              active={screen === 'chat' || messagesOpen}
+              onPress={() => navigate('chat')}
+              active={screen === 'chat'}
             />
             <DockIconButton icon="notifications-active" label="Notifications" scene={scene} badge={String(dynamicStay?.notifications?.length ?? 0)} onPress={() => notify(`${dynamicStay?.notifications?.length ?? 0} notification(s) en attente`)} pulse />
             <DockIconButton icon="home" label="Accueil" scene={scene} onPress={() => navigate('home')} active />
@@ -692,7 +739,11 @@ export default function App() {
               <SolyDetailCard label="Heure" value={selectedAgenda.time} scene={scene} />
               <SolyDetailCard label="Lieu" value={selectedAgenda.place} scene={scene} />
               <SolyDetailCard label="Prestataire" value={selectedAgenda.provider} scene={scene} />
-              <SolyBtnPrimary label="Contacter le chauffeur" scene={scene} onPress={() => notify('Chat chauffeur ouvert')} />
+              <SolyBtnPrimary label="Contacter le chauffeur" scene={scene} onPress={() => {
+                setSelectedAgenda(null);
+                if (dynamicStay?.driver) setDriverChatOpen(true);
+                else notify('Aucun chauffeur n’est encore assigné à ce séjour.');
+              }} />
               <SolyBtnDecline label="Fermer" scene={scene} onPress={() => setSelectedAgenda(null)} />
             </>
           ) : null}
@@ -706,12 +757,20 @@ export default function App() {
         >
           {selectedSpot ? (
             <>
-              <MiniMap dark apiKey={session.bootstrap?.settings.googleMapsApiKey} city={liveWeather.city} markers={[selectedSpot]} />
+              <MiniMap dark apiKey={session.bootstrap?.settings.googleMapsApiKey} city={dynamicStay?.city || liveWeather.city} markers={[selectedSpot]} />
               <Text style={[styles.explorerSheetDescription, { color: scenes.editorial.textSecondary }]}>{selectedSpot.description}</Text>
               <SolyDetailCard label="Distance" value={selectedSpot.distance} scene={scenes.editorial} />
               <SolyDetailCard label="Trajet" value={selectedSpot.eta} scene={scenes.editorial} />
-              <SolyBtnPrimary label="M'y orienter" scene={scenes.editorial} onPress={() => notify('Guidage actif vers le spot')} />
-              <SolyBtnDecline label="Partager au groupe" scene={scenes.editorial} onPress={() => notify('Spot partagé au groupe')} />
+              <SolyBtnPrimary label="M'y orienter" scene={scenes.editorial} onPress={() => {
+                const destination = `${selectedSpot.latitude},${selectedSpot.longitude}`;
+                void Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`)
+                  .catch(() => notify('Impossible d’ouvrir le guidage sur ce téléphone.'));
+              }} />
+              <SolyBtnDecline label="Partager" scene={scenes.editorial} onPress={() => {
+                const mapUrl = `https://maps.google.com/?q=${selectedSpot.latitude},${selectedSpot.longitude}`;
+                void Share.share({ title: selectedSpot.title, message: `${selectedSpot.title}\n${mapUrl}` })
+                  .catch(() => notify('Partage indisponible sur ce téléphone.'));
+              }} />
             </>
           ) : null}
         </BottomSheet>
@@ -726,7 +785,6 @@ export default function App() {
           }}
         />
         {driverChatOpen ? <DriverContactModal token={session.token!} stay={dynamicStay} onClose={() => setDriverChatOpen(false)} /> : null}
-        {messagesOpen ? <MessageCenterOverlay onClose={() => setMessagesOpen(false)} notify={notify} user={session.user} /> : null}
           </SafeAreaView>
         </LinearGradient>
         </View>
@@ -801,6 +859,7 @@ function HomeScreen({
   user,
   stay,
   onLogout,
+  openSolyChatSignal,
 }: {
   navigate: (screen: ModuleKey, vibration?: number) => void;
   notify: (message: string, pattern?: number | number[]) => void;
@@ -811,17 +870,16 @@ function HomeScreen({
   user: SolyUser;
   stay: SolyStay | null;
   onLogout: () => Promise<void>;
+  openSolyChatSignal: number;
 }) {
   const scene = scenes.immersive;
   const fade = useFadeUp();
   const ringPlayer = useAudioPlayer(solyRing);
-  const [arrivalSheetOpen, setArrivalSheetOpen] = useState(false);
-  const [formalitiesSheetOpen, setFormalitiesSheetOpen] = useState(false);
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   const [solyRequestOpen, setSolyRequestOpen] = useState(false);
   const [solyInitialMode, setSolyInitialMode] = useState<'request' | 'chat'>('request');
   const [solyRequests, setSolyRequests] = useState<SolyConciergeRequest[]>([]);
-  const unreadSoly = useUnreadMessages('client');
+  const unreadSoly = useUnreadMessages('client', user.id);
   const solyIncomingCount = unreadSoly.countUnread(solyRequests);
   const [homeEmergencyOpen, setHomeEmergencyOpen] = useState(false);
   const homeModuleRows = useMemo(() => chunkArray(homeModules, 3), []);
@@ -841,6 +899,12 @@ function HomeScreen({
       clearInterval(timer);
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!openSolyChatSignal) return;
+    setSolyInitialMode('chat');
+    setSolyRequestOpen(true);
+  }, [openSolyChatSignal]);
 
   // Ouvrir le chat marque toutes les conversations comme lues : le compteur
   // tombe a zero et la pastille rouge disparait, y compris apres redemarrage.
@@ -875,7 +939,7 @@ function HomeScreen({
 
       <View style={styles.homeHeader}>
         <Text style={[styles.homeGreeting, { color: scene.accentPrimary }]}>Bonjour, {firstName(user.name)}</Text>
-        <Text style={[styles.homeMeta, { color: scene.textPrimary }]}>Vendredi 15 mai  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '27°C'}</Text>
+        <Text style={[styles.homeMeta, { color: scene.textPrimary }]}>{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}  ·  {weather.city}  ·  {weather.days[0]?.temp ?? '—'}</Text>
       </View>
 
       <TouchableOpacity
@@ -890,15 +954,6 @@ function HomeScreen({
         <Text style={[styles.homeLogo, { color: scene.accentPrimary }]}>SOLÝ</Text>
         <Text style={[styles.homeSubtitle, { color: scene.textPrimary }]}>VOTRE MAJORDOME</Text>
       </View>
-
-      <HomeStayActions
-        disabled={false}
-        onArrival={() => setArrivalSheetOpen(true)}
-        onFormalities={() => {
-          Vibration.vibrate(8);
-          setFormalitiesSheetOpen(true);
-        }}
-      />
 
       <TouchableOpacity activeOpacity={0.75} onPress={wakeSoly} style={styles.homeWakePrompt}>
         <View style={[styles.homeWakeDot, { backgroundColor: scene.accentPrimary }]} />
@@ -977,20 +1032,6 @@ function HomeScreen({
         notify={notify}
       />
 
-      <ArrivalModeSheet
-        visible={arrivalSheetOpen}
-        onClose={() => setArrivalSheetOpen(false)}
-        onConfirm={() => {
-          setArrivalSheetOpen(false);
-          notify('Arrivée confirmée · chauffeur informé', [12, 30, 12]);
-        }}
-      />
-      <FormalitiesSheet
-        visible={formalitiesSheetOpen}
-        user={user}
-        onClose={() => setFormalitiesSheetOpen(false)}
-        notify={notify}
-      />
       <SolyRequestSheet
         visible={solyRequestOpen}
         initialMode={solyInitialMode}
@@ -1224,6 +1265,10 @@ function SolyRequestSheet({
   const [activeRequestId, setActiveRequestId] = useState<number | null>(null);
   const [requestFeedback, setRequestFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const activeRequest = requests.find((item) => item.id === activeRequestId) ?? requests[0] ?? null;
+  const activeIsDriverChat = activeRequest?.channel === 'driver_chat';
+  const activeDriverName = activeRequest?.messages.slice().reverse().find((message) => message.sender === 'driver')?.senderName
+    || stay?.driver?.name
+    || 'Votre chauffeur';
   const days = useMemo(() => {
     const today = new Date();
 
@@ -1349,12 +1394,12 @@ function SolyRequestSheet({
             {mode === 'chat' ? (
               <View style={styles.solyChatIdentity}>
                 <View style={styles.solyChatIdentityAvatar}>
-                  <MaterialIcons name="diamond" size={18} color="#F7F2E8" />
+                  <MaterialIcons name={activeIsDriverChat ? 'local-taxi' : 'diamond'} size={18} color="#F7F2E8" />
                   <View style={styles.solyChatIdentityOnlineDot} />
                 </View>
                 <View style={styles.solyChatIdentityCopy}>
-                  <Text style={styles.solyChatIdentityTitle}>SOLÝ</Text>
-                  <Text style={styles.solyChatIdentitySubtitle}>Votre conciergerie privée</Text>
+                  <Text style={styles.solyChatIdentityTitle}>{activeIsDriverChat ? activeDriverName : 'SOLÝ'}</Text>
+                  <Text style={styles.solyChatIdentitySubtitle}>{activeIsDriverChat ? 'Chauffeur de votre séjour' : 'Votre conciergerie privée'}</Text>
                 </View>
               </View>
             ) : (
@@ -1367,7 +1412,7 @@ function SolyRequestSheet({
             </TouchableOpacity>
           </View>
           {mode === 'chat' ? (
-            <View style={styles.solyChatPresence}><View style={styles.solyChatPresenceDot} /><Text style={styles.solyChatPresenceText}>EN LIGNE  ·  RÉPONSE RAPIDE</Text></View>
+            <View style={styles.solyChatPresence}><View style={styles.solyChatPresenceDot} /><Text style={styles.solyChatPresenceText}>{activeIsDriverChat ? 'CANAL CHAUFFEUR  ·  SÉJOUR PRIVÉ' : 'CANAL SOLÝ  ·  CONCIERGERIE PRIVÉE'}</Text></View>
           ) : null}
 
           {mode === 'request' ? (
@@ -1485,7 +1530,8 @@ function SolyRequestSheet({
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.solyChatThreads}>
                   {requests.map((item) => (
                     <TouchableOpacity key={item.id} activeOpacity={0.75} onPress={() => setActiveRequestId(item.id)} style={[styles.solyChatThreadChip, activeRequest?.id === item.id && styles.solyChatThreadChipActive]}>
-                      <Text style={[styles.solyChatThreadText, activeRequest?.id === item.id && styles.solyChatThreadTextActive]}>{item.stayCode || item.code}</Text>
+                      <MaterialIcons name={item.channel === 'driver_chat' ? 'local-taxi' : 'diamond'} size={12} color={activeRequest?.id === item.id ? '#092416' : '#CFA055'} />
+                      <Text style={[styles.solyChatThreadText, activeRequest?.id === item.id && styles.solyChatThreadTextActive]}>{item.channel === 'driver_chat' ? 'Chauffeur' : item.stayCode || item.code}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -1496,7 +1542,7 @@ function SolyRequestSheet({
                 <>
                   <ScrollView contentContainerStyle={styles.solyChatMessages} showsVerticalScrollIndicator={false}>
                     <View style={styles.solyChatRequestContext}>
-                      <Text style={styles.solyChatRequestContextLabel}>{activeRequest.scheduledDate} · {activeRequest.slotLabel}</Text>
+                      <Text style={styles.solyChatRequestContextLabel}>{activeIsDriverChat ? 'CHAUFFEUR DU SÉJOUR' : `${activeRequest.scheduledDate} · ${activeRequest.slotLabel}`}</Text>
                       <Text style={styles.solyChatRequestContextText}>{activeRequest.title}</Text>
                     </View>
                     {activeRequest.messages.map((message) => {
@@ -1512,7 +1558,7 @@ function SolyRequestSheet({
                               </View>
                             ) : null}
                             <Text style={styles.solyChatMessageText}>{message.message}</Text>
-                            <Text style={styles.solyChatMessageTime}>{formatSolyMessageTime(message.createdAt)}</Text>
+                            <Text style={styles.solyChatMessageTime}>{formatSolyMessageTime(message.createdAt)}{mine ? '  ✓✓' : ''}</Text>
                           </View>
                         </View>
                       );
@@ -1574,10 +1620,6 @@ function AccountSheet({
   onLogout: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<AccountSection | ''>('');
-  const [paymentDeleteConfirm, setPaymentDeleteConfirm] = useState(false);
-  const [paymentRemoved, setPaymentRemoved] = useState(false);
-  const [paymentEntryOpen, setPaymentEntryOpen] = useState(false);
-  const [inviteGuestOpen, setInviteGuestOpen] = useState(false);
   const [privacySettings, setPrivacySettings] = useState({
     location: true,
     notifications: true,
@@ -1585,7 +1627,6 @@ function AccountSheet({
   const detailExpanded =
     activeSection === 'advantages' ||
     activeSection === 'personal' ||
-    activeSection === 'payment' ||
     activeSection === 'privacy';
   const loyaltyName = (user.loyalty?.level_name || 'Voyageur').toUpperCase();
   const loyaltyPoints = user.loyalty?.points_24m ?? 0;
@@ -1642,9 +1683,7 @@ function AccountSheet({
   const sections: { key: AccountSection; title: string; subtitle: string; icon: React.ComponentProps<typeof MaterialIcons>['name'] }[] = [
     { key: 'advantages', title: 'Vos avantages', subtitle: 'Statut Habitué · accès prioritaire', icon: 'star-outline' },
     { key: 'personal', title: 'Données personnelles', subtitle: 'Profil et coordonnées', icon: 'person-outline' },
-    { key: 'payment', title: 'Paiement', subtitle: 'Visa Infinite · •••• 6411', icon: 'credit-card' },
     { key: 'privacy', title: 'Confidentialité', subtitle: 'Permissions et préférences', icon: 'lock-outline' },
-    { key: 'guests', title: 'Inviter un convive', subtitle: 'Partager une invitation au séjour', icon: 'person-add-alt' },
   ];
 
   return (
@@ -1697,7 +1736,6 @@ function AccountSheet({
                     key={section.key}
                     style={[
                       active && detailExpanded && styles.accountAdvantageExpanded,
-                      active && section.key === 'payment' && styles.accountPaymentExpanded,
                       active && section.key === 'privacy' && styles.accountPrivacyExpanded,
                     ]}
                   >
@@ -1705,10 +1743,6 @@ function AccountSheet({
                       activeOpacity={0.76}
                       onPress={() => {
                         Vibration.vibrate(5);
-                        if (section.key === 'guests') {
-                          setInviteGuestOpen(true);
-                          return;
-                        }
                         setActiveSection(active ? '' : section.key);
                       }}
                       style={[
@@ -1769,74 +1803,6 @@ function AccountSheet({
                       </View>
                     ) : null}
 
-                    {active && section.key === 'payment' ? (
-                      <View style={styles.accountPaymentContent}>
-                        {!paymentRemoved ? (
-                          <View style={styles.accountModernPaymentCard}>
-                            {!paymentDeleteConfirm ? (
-                              <View style={styles.accountPaymentIcon}>
-                                <MaterialIcons name="credit-card" size={23} color="#CFA055" />
-                              </View>
-                            ) : null}
-                            <View style={styles.accountPaymentCopy}>
-                              <Text style={styles.accountPaymentName}>Visa ···· 4242</Text>
-                              <Text style={styles.accountPaymentExpiry}>Expire 12/27</Text>
-                            </View>
-                            {paymentDeleteConfirm ? (
-                              <View style={styles.accountPaymentConfirmActions}>
-                                <TouchableOpacity
-                                  activeOpacity={0.72}
-                                  onPress={() => setPaymentDeleteConfirm(false)}
-                                  style={styles.accountPaymentCancel}
-                                >
-                                  <Text style={styles.accountPaymentCancelText}>ANNULER</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  activeOpacity={0.72}
-                                  onPress={() => {
-                                    Vibration.vibrate(8);
-                                    setPaymentRemoved(true);
-                                    setPaymentDeleteConfirm(false);
-                                  }}
-                                  style={styles.accountPaymentDelete}
-                                >
-                                  <Text style={styles.accountPaymentDeleteText}>SUPPRIMER</Text>
-                                </TouchableOpacity>
-                              </View>
-                            ) : (
-                              <>
-                                <View style={styles.accountVisaBadge}>
-                                  <Text style={styles.accountVisaText}>VISA</Text>
-                                </View>
-                                <TouchableOpacity
-                                  activeOpacity={0.72}
-                                  onPress={() => {
-                                    Vibration.vibrate(5);
-                                    setPaymentDeleteConfirm(true);
-                                  }}
-                                  style={styles.accountModernPaymentRemove}
-                                >
-                                  <MaterialIcons name="close" size={23} color="#B6C0B8" />
-                                </TouchableOpacity>
-                              </>
-                            )}
-                          </View>
-                        ) : null}
-
-                        <TouchableOpacity
-                          activeOpacity={0.75}
-                          onPress={() => {
-                            Vibration.vibrate(5);
-                            setPaymentEntryOpen(true);
-                          }}
-                          style={styles.accountAddPayment}
-                        >
-                          <MaterialIcons name="add" size={31} color="#CFA055" />
-                          <Text style={styles.accountAddPaymentText}>Ajouter un moyen de paiement</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
-
                     {active && section.key === 'privacy' ? (
                       <View style={styles.accountPrivacyList}>
                         {[
@@ -1889,16 +1855,6 @@ function AccountSheet({
             </TouchableOpacity>
           </View>
         </View>
-        {paymentEntryOpen ? (
-          <PaymentEntrySheet
-            onClose={() => setPaymentEntryOpen(false)}
-            onSave={() => {
-              setPaymentRemoved(false);
-              setPaymentEntryOpen(false);
-            }}
-          />
-        ) : null}
-        {inviteGuestOpen ? <InviteGuestSheet onClose={() => setInviteGuestOpen(false)} /> : null}
       </View>
     </Modal>
   );
@@ -2484,17 +2440,16 @@ function StayScreen({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(0);
-  const [locatorOpen, setLocatorOpen] = useState(false);
   const visibleDays = normalizeStayDays(stay);
   const driver = stay?.driver || null;
 
   return (
-    <View style={[styles.stayLayerScreen, locatorOpen && styles.stayLayerScreenExpanded]}>
+    <View style={styles.stayLayerScreen}>
       <View style={styles.stayLayerTop}>
         <Image source={solyResting} resizeMode="contain" style={styles.stayMascotPeek} />
       </View>
 
-      <View style={[styles.stayLayerSheet, locatorOpen && styles.stayLayerSheetExpanded]}>
+      <View style={styles.stayLayerSheet}>
         <View style={[styles.atmosphereHandle, styles.stayLayerHandle]} />
         <View style={styles.atmosphereTitleRow}>
           <Text style={styles.atmosphereTitle}>Mon séjour</Text>
@@ -2516,23 +2471,11 @@ function StayScreen({
           <Text style={styles.stayDriverCar}>{driver.vehicle || 'Véhicule confirmé par SOLÝ'} {driver.plate ? ` · ${driver.plate}` : ''}</Text>
 
           <View style={styles.driverArrivalActions}>
-            <TouchableOpacity
-              activeOpacity={0.78}
-              onPress={() => {
-                Vibration.vibrate(8);
-                setLocatorOpen((current) => !current);
-              }}
-              style={[styles.stayDriverButton, locatorOpen && styles.stayDriverButtonLocated]}
-            >
-              <MaterialIcons name={locatorOpen ? 'check' : 'location-on'} size={18} color={locatorOpen ? '#54D786' : '#CFA055'} />
-              <Text style={[styles.stayDriverButtonText, locatorOpen && styles.stayDriverButtonTextLocated]}>LOCALISER</Text>
-            </TouchableOpacity>
             <TouchableOpacity activeOpacity={0.78} onPress={onOpenDriverChat} style={styles.stayDriverButton}>
               <MaterialIcons name="mail-outline" size={18} color="#CFA055" />
               <Text style={styles.stayDriverButtonText}>CONTACTER</Text>
             </TouchableOpacity>
           </View>
-          <StayLocatorMap visible={locatorOpen} onClose={() => setLocatorOpen(false)} />
         </View> : null}
 
         <Text style={styles.stayLayerWelcome}>{stay ? `Nous sommes heureux de vous accueillir du ${formatStayDate(stay.arrivalDate)} au ${formatStayDate(stay.departureDate)} · ${stay.city}` : 'Aucun séjour actif n’est encore disponible.'}</Text>
@@ -2714,12 +2657,17 @@ function DriverContactModal({ token, stay, onClose }: { token: string; stay: Sol
           {!loading && !messages.length ? <Text style={styles.contactChatNotice}>{error || 'Aucun message pour le moment.'}</Text> : null}
           {messages.map((message) => {
             const mine = message.sender === 'client';
+            const fromSoly = message.sender === 'staff';
+            const senderLabel = fromSoly ? 'ÉQUIPE SOLÝ' : 'CHAUFFEUR';
             return (
               <View key={message.id} style={[styles.contactChatMessageRow, mine ? styles.contactChatMessageRowMine : styles.contactChatMessageRowDriver]}>
-                <View style={[styles.contactChatBubble, mine ? styles.contactChatBubbleMine : styles.contactChatBubbleDriver]}>
-                  {!mine && message.senderName ? <Text style={styles.contactChatConnected}>{message.senderName}</Text> : null}
+                <View style={[styles.contactChatBubble, mine ? styles.contactChatBubbleMine : styles.contactChatBubbleDriver, fromSoly && styles.contactChatBubbleSoly]}>
+                  {!mine ? <View style={styles.contactChatSenderRow}>
+                    <MaterialIcons name={fromSoly ? 'diamond' : 'local-taxi'} size={12} color={fromSoly ? '#D8B46B' : '#71B98A'} />
+                    <Text style={[styles.contactChatSender, fromSoly && styles.contactChatSenderSoly]}>{senderLabel} · {message.senderName || (fromSoly ? 'Votre majordome' : driverName)}</Text>
+                  </View> : null}
                   <Text style={styles.contactChatMessageText}>{message.message}</Text>
-                  <Text style={styles.contactChatMessageTime}>{formatSolyMessageTime(message.createdAt)}</Text>
+                  <Text style={styles.contactChatMessageTime}>{formatSolyMessageTime(message.createdAt)}{mine ? '  ✓✓' : ''}</Text>
                 </View>
               </View>
             );
@@ -3713,27 +3661,18 @@ function EmergencyModal({
   );
 }
 
-function useLiveWeather() {
+function useLiveWeather(enabled: boolean, preferredCity = 'Marrakech') {
   const [weather, setWeather] = useState<LiveWeatherState>(fallbackWeather);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let mounted = true;
 
     const loadWeather = async () => {
       try {
-        const permission = await Location.requestForegroundPermissionsAsync();
-        if (permission.status !== 'granted') {
-          const marrakechWeather = await fetchWeatherForCoords(31.6295, -7.9811, 'Marrakech', 'denied');
-          if (mounted) setWeather(marrakechWeather);
-          return;
-        }
-
-        const position = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        const { latitude, longitude } = position.coords;
-        const city = await resolveCity(latitude, longitude);
-        const live = await fetchWeatherForCoords(latitude, longitude, city, 'ready');
+        const city = preferredCity.trim() || 'Marrakech';
+        const coords = await weatherCoordsForCity(city);
+        const live = await fetchWeatherForCoords(coords.latitude, coords.longitude, coords.city, 'ready');
         if (mounted) setWeather(live);
       } catch {
         try {
@@ -3750,9 +3689,20 @@ function useLiveWeather() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [enabled, preferredCity]);
 
   return weather;
+}
+
+async function weatherCoordsForCity(city: string) {
+  const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`);
+  if (!response.ok) throw new Error('Weather geocoding failed');
+  const body = await response.json();
+  const place = body.results?.[0];
+  const latitude = Number(place?.latitude);
+  const longitude = Number(place?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) throw new Error('Weather city not found');
+  return { latitude, longitude, city: String(place?.name || city) };
 }
 
 function useExchangeRate() {
@@ -5335,6 +5285,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 5,
   },
   solyChatThreadChipActive: {
     backgroundColor: '#CFA055',
@@ -6524,10 +6476,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   contactChatMessageRowDriver: {
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   contactChatMessageRowMine: {
-    justifyContent: 'flex-start',
+    justifyContent: 'flex-end',
   },
   contactChatBubble: {
     maxWidth: '72%',
@@ -6537,12 +6489,34 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   contactChatBubbleDriver: {
+    backgroundColor: '#123A28',
+    borderBottomLeftRadius: 4,
+  },
+  contactChatBubbleSoly: {
+    borderWidth: 1,
+    borderColor: 'rgba(207,160,85,0.34)',
     backgroundColor: '#082719',
   },
   contactChatBubbleMine: {
     borderWidth: 1,
     borderColor: 'rgba(207,160,85,0.36)',
     backgroundColor: 'rgba(207,160,85,0.08)',
+    borderBottomRightRadius: 4,
+  },
+  contactChatSenderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 5,
+  },
+  contactChatSender: {
+    color: '#71B98A',
+    fontFamily: type.bodyMedium,
+    fontSize: 8,
+    lineHeight: 11,
+  },
+  contactChatSenderSoly: {
+    color: '#D8B46B',
   },
   contactChatMessageText: {
     fontFamily: type.body,

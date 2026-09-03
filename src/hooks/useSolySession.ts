@@ -46,9 +46,11 @@ export function useSolySession() {
     setSubmitting(true);
     try {
       await logoutSoly(token);
+    } catch {
+      // La session locale doit toujours se fermer, même si le réseau tombe.
+    } finally {
       setToken(null);
       setUser(null);
-    } finally {
       setSubmitting(false);
     }
   }, [token]);

@@ -26,11 +26,17 @@ import {
 import { useUnreadMessages } from '../hooks/useUnreadMessages';
 
 type Tab = 'missions' | 'messages' | 'profile';
-type Props = { token: string; user: SolyUser; onLogout: () => Promise<void> };
+type Props = {
+  token: string;
+  user: SolyUser;
+  onLogout: () => Promise<void>;
+  notificationScreen?: string;
+  onNotificationHandled?: () => void;
+};
 
 const emptyDashboard: SolyDriverDashboard = { provider: { id: 0, code: '', name: '', phone: '' }, stays: [], requests: [], updatedAt: '' };
 
-export function DriverPortal({ token, user, onLogout }: Props) {
+export function DriverPortal({ token, user, onLogout, notificationScreen, onNotificationHandled }: Props) {
   const [tab, setTab] = useState<Tab>('missions');
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [loading, setLoading] = useState(true);
@@ -38,7 +44,13 @@ export function DriverPortal({ token, user, onLogout }: Props) {
   const [error, setError] = useState('');
   const [selectedStay, setSelectedStay] = useState<SolyDriverStay | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<SolyConciergeRequest | null>(null);
-  const unread = useUnreadMessages('driver');
+  const unread = useUnreadMessages('driver', user.id);
+
+  useEffect(() => {
+    if (!notificationScreen) return;
+    setTab(notificationScreen === 'driver_messages' || notificationScreen === 'driver_chat' || notificationScreen === 'soly_chat' ? 'messages' : 'missions');
+    onNotificationHandled?.();
+  }, [notificationScreen, onNotificationHandled]);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true);
@@ -143,11 +155,16 @@ function MessageList({ requests, refreshing, onRefresh, onOpen, countUnreadFor }
 
 function MissionDetails({ stay, onClose }: { stay: SolyDriverStay | null; onClose: () => void }) {
   if (!stay) return null;
+  const navigationUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(stay.city || 'Marrakech')}`;
   return <Modal animationType="slide" visible onRequestClose={onClose}><LinearGradient colors={['#031B0D', '#0B3421']} style={styles.modalRoot}><SafeAreaView style={styles.modalSafe} edges={['top', 'bottom']}>
     <View style={styles.modalHeader}><TouchableOpacity onPress={onClose} style={styles.close}><MaterialIcons name="arrow-back" size={21} color="#F1EBDD" /></TouchableOpacity><View><Text style={styles.modalEyebrow}>FEUILLE DE ROUTE</Text><Text style={styles.modalTitle}>{stay.code}</Text></View></View>
     <ScrollView contentContainerStyle={styles.modalContent}>
       <Section title="Client"><Line label="Nom" value={stay.client.name || 'Client SOLÝ'} /><Line label="Téléphone" value={stay.client.phone || 'Non renseigné'} /><Line label="Voyageurs" value={String(stay.guests)} /></Section>
-      <View style={styles.quickActions}>{stay.client.phone ? <TouchableOpacity style={styles.quickButton} onPress={() => void Linking.openURL(`tel:${stay.client.phone}`)}><MaterialIcons name="phone" size={18} color="#082719" /><Text style={styles.quickText}>APPELER</Text></TouchableOpacity> : null}{stay.client.phone ? <TouchableOpacity style={styles.quickButton} onPress={() => void Linking.openURL(`https://wa.me/${stay.client.phone.replace(/\D/g, '')}`)}><MaterialIcons name="chat" size={18} color="#082719" /><Text style={styles.quickText}>WHATSAPP</Text></TouchableOpacity> : null}</View>
+      <View style={styles.quickActions}>
+        <TouchableOpacity style={styles.quickButton} onPress={() => void Linking.openURL(navigationUrl)}><MaterialIcons name="navigation" size={18} color="#082719" /><Text style={styles.quickText}>ITINÉRAIRE</Text></TouchableOpacity>
+        {stay.client.phone ? <TouchableOpacity style={styles.quickButton} onPress={() => void Linking.openURL(`tel:${stay.client.phone}`)}><MaterialIcons name="phone" size={18} color="#082719" /><Text style={styles.quickText}>APPELER</Text></TouchableOpacity> : null}
+        {stay.client.phone ? <TouchableOpacity style={styles.quickButton} onPress={() => void Linking.openURL(`https://wa.me/${stay.client.phone.replace(/\D/g, '')}`)}><MaterialIcons name="chat" size={18} color="#082719" /><Text style={styles.quickText}>WHATSAPP</Text></TouchableOpacity> : null}
+      </View>
       <Section title="Séjour"><Line label="Destination" value={stay.city || 'À confirmer'} /><Line label="Arrivée" value={longDate(stay.arrivalDate)} /><Line label="Départ" value={longDate(stay.departureDate)} /><Line label="Mode d’arrivée" value={stay.arrivalMode || 'À confirmer'} /></Section>
       <Section title="Programme"><Line label="Jours disponibles" value={String(stay.days.length)} />{stay.days.map((day, index) => <Line key={index} label={`Jour ${index + 1}`} value={dayLabel(day)} />)}{!stay.days.length ? <Text style={styles.sectionEmpty}>Programme en cours de préparation par SOLÝ.</Text> : null}</Section>
     </ScrollView>

@@ -31,8 +31,8 @@ function unreadInRequest(request: SolyConciergeRequest, seenId: string | undefin
   return messages.slice(seenIndex + 1).filter((message) => isIncoming(message, audience)).length;
 }
 
-export function useUnreadMessages(audience: UnreadAudience) {
-  const storageKey = `soly.seenMessages.${audience}`;
+export function useUnreadMessages(audience: UnreadAudience, userId: number | string) {
+  const storageKey = `soly.seenMessages.${audience}.${userId}`;
   const [seen, setSeen] = useState<SeenMap>({});
   const [ready, setReady] = useState(false);
   // Evite d ecrire dans SecureStore avant d avoir relu l etat persiste.

@@ -46,7 +46,7 @@ export function AdminPortal({ token, user, onLogout }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<SolyConciergeRequest | null>(null);
-  const unread = useUnreadMessages('staff');
+  const unread = useUnreadMessages('staff', user.id);
   const [selectedStay, setSelectedStay] = useState<SolyAdminStay | null>(null);
 
   const load = useCallback(async (quiet = false) => {

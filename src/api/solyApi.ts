@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const TOKEN_KEY = 'soly_mobile_token';
+const PUSH_TOKEN_KEY = 'soly_mobile_push_token';
 
 export const SOLY_API_URL = (
   process.env.EXPO_PUBLIC_SOLY_API_URL ?? 'https://solyvents.fr/wp/wp-json/soly-mobile/v1'
@@ -42,13 +43,6 @@ export type SolyBootstrap = {
     googleMapsApiKey?: string;
     googleMapsConfigured?: boolean;
     openaiConfigured?: boolean;
-  };
-  catalog: {
-    services: Array<Record<string, unknown>>;
-    eventPackages: Record<string, unknown>;
-    vehicleAddons: Array<Record<string, unknown>>;
-    securityAddons: Array<Record<string, unknown>>;
-    assuranceOptions: Array<Record<string, unknown>>;
   };
   updatedAt: string;
 };
@@ -223,6 +217,27 @@ async function storageDelete(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
 }
 
+async function pushTokenGet(): Promise<string | null> {
+  if (Platform.OS === 'web') return globalThis.localStorage?.getItem(PUSH_TOKEN_KEY) ?? null;
+  return SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+}
+
+async function pushTokenSet(token: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.setItem(PUSH_TOKEN_KEY, token);
+    return;
+  }
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+}
+
+async function pushTokenDelete(): Promise<void> {
+  if (Platform.OS === 'web') {
+    globalThis.localStorage?.removeItem(PUSH_TOKEN_KEY);
+    return;
+  }
+  await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+}
+
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
@@ -267,9 +282,15 @@ export async function loginSoly(email: string, password: string): Promise<AuthRe
 
 export async function logoutSoly(token: string | null): Promise<void> {
   try {
-    if (token) await apiRequest<null>('/auth/logout', { method: 'POST' }, token);
+    const pushToken = await pushTokenGet();
+    if (token) {
+      await apiRequest<null>('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ pushToken }),
+      }, token);
+    }
   } finally {
-    await storageDelete();
+    await Promise.all([storageDelete(), pushTokenDelete()]);
   }
 }
 
@@ -289,8 +310,10 @@ export function loadSolyExplorer(token: string, input: { city?: string; latitude
   return apiRequest<SolyExplorerGuide>(`/explorer?${query.toString()}`, {}, token);
 }
 
-export function registerSolyPushToken(token: string, pushToken: string, platform: string): Promise<{ registered: boolean }> {
-  return apiRequest('/push/register', { method: 'POST', body: JSON.stringify({ token: pushToken, platform }) }, token);
+export async function registerSolyPushToken(token: string, pushToken: string, platform: string): Promise<{ registered: boolean }> {
+  const result = await apiRequest<{ registered: boolean }>('/push/register', { method: 'POST', body: JSON.stringify({ token: pushToken, platform }) }, token);
+  if (result.registered) await pushTokenSet(pushToken);
+  return result;
 }
 
 export function createSolyConciergeRequest(
